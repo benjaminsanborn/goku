@@ -47,7 +47,24 @@ cd web && npm install && npm run build && cd ..
 go build -o bin/gokud ./cmd/gokud && ./bin/gokud
 ```
 
-## Deploy to a server
+## The control plane is self-hosted
+
+goku.host is served by a container that goku built from its own repo
+(`goku-app/goku:<sha>`): push to main on GitHub → webhook → the running
+container builds, health-checks, routes, and replaces itself (blue-green via
+per-deployment ports; the old container is stopped last). Its config lives in
+the goku project's own **secrets** (token, DATABASE_URL with the goku role's
+password, OAuth, webhook secret, mounts paths); `host_mounts` in goku.yaml
+(operator-org only) give it the machine: `/var/lib/goku` repos, docker.sock,
+`/etc/goku` (apps.caddy), `/etc/caddy` (ro).
+
+**Break-glass**: if the container is wedged, the pre-cutover binary and unit
+still exist: `sudo systemctl start gokud` (serves :8080) and point goku.host
+at it in `/etc/goku/apps.caddy` (`reverse_proxy localhost:8080`), then
+`caddy reload --config /etc/caddy/Caddyfile`. A pre-cutover DB dump lives in
+`/tmp/goku-precutover-*.sql.gz` (move it somewhere durable).
+
+## Deploy to a server (fresh install)
 
 Target: any Ubuntu 24.04 host reachable over ssh with passwordless sudo for your user.
 
@@ -55,7 +72,8 @@ Target: any Ubuntu 24.04 host reachable over ssh with passwordless sudo for your
 # one-time host setup (the only sudo step):
 ssh <host> 'sudo -n bash -s' < scripts/server-bootstrap.sh
 
-# every deploy (cross-compile + rsync binary/UI + restart + health check):
+# first deploy only (cross-compile + rsync binary/UI + restart + health check);
+# after that the control plane self-deploys from GitHub pushes:
 scripts/deploy.sh               # GOKU_HOST=<ssh-alias> (default: ubuntu)
 ```
 
