@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: goku
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: goku
+    main: ./cmd/goku
+    binary: goku
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
+  - id: gokud
+    main: ./cmd/gokud
+    binary: gokud
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: goku
+    ids: [goku]
+    formats: [tar.gz]
+    name_template: >-
+      goku_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+
+  - id: gokud
+    ids: [gokud]
+    formats: [tar.gz]
+    name_template: >-
+      gokud_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+brews:
+  - name: goku
+    ids: [goku]
+    commit_author:
+      name: benjaminsanborn
+      email: benjaminsanborn@gmail.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    directory: Formula
+    description: "Compliant CI/CD for AI agents"
+    install: |
+      bin.install "goku"
+    test: |
+      system "#{bin}/goku", "version"
+    repository:
+      owner: benjaminsanborn
+      name: homebrew-goku
+      branch: main
+      token: "{{ .Env.GITHUB_TOKEN }}"
+
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

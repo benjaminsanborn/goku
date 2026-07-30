@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,15 @@ import (
 
 	"github.com/benjaminsanborn/goku/internal/store"
 )
+
+type ctxKey int
+
+const orgKey ctxKey = iota
+
+func orgFrom(ctx context.Context) string {
+	org, _ := ctx.Value(orgKey).(string)
+	return org
+}
 
 type Server struct {
 	Store *store.Store
@@ -33,14 +43,44 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/changesets/{id}", s.getChangeset)
 	api.HandleFunc("POST /v1/changesets/{id}/merge", s.handleMerge)
 	api.HandleFunc("GET /v1/events", s.listEvents)
+	api.HandleFunc("GET /v1/me", s.handleMe)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/signup", s.handleSignup) // more specific than /v1/ → unauthenticated
 	mux.Handle("/v1/", s.requireToken(api))
 	mux.Handle("/git/", s.gitHandler())
 	mux.Handle("/mcp", s.requireToken(s.mcpHandler()))
 	mux.Handle("/", s.spaHandler())
 
 	return cors(mux)
+}
+
+// handleSignup creates an organization and its first token. Open signup: the
+// token is the only credential and is returned exactly once.
+func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Organization string `json:"organization"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	org, err := s.Store.CreateOrg(r.Context(), in.Organization)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	token, err := s.Store.CreateToken(r.Context(), org.ID, "owner")
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, map[string]any{"organization": org, "token": token}, nil)
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	org, err := s.Store.GetOrg(r.Context(), orgFrom(r.Context()))
+	respond(w, map[string]any{"organization": org}, err)
 }
 
 // actorFrom attributes an authenticated write. The single-token dev slice
@@ -54,7 +94,7 @@ func (s *Server) actorFrom(r *http.Request) string {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := s.Store.ListProjects(r.Context())
+	projects, err := s.Store.ListProjects(r.Context(), orgFrom(r.Context()))
 	respond(w, map[string]any{"projects": projects}, err)
 }
 
@@ -66,7 +106,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	p, err := s.createProject(r.Context(), in.Name, s.actorFrom(r))
+	p, err := s.createProject(r.Context(), orgFrom(r.Context()), in.Name, s.actorFrom(r))
 	if err != nil {
 		respond(w, nil, err)
 		return
@@ -85,43 +125,61 @@ func (s *Server) handleOpenChangeset(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	cs, err := s.openChangeset(r.Context(), r.PathValue("ref"), in.Title, in.Description, in.Branch, s.actorFrom(r), in.Files)
+	cs, err := s.openChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("ref"), in.Title, in.Description, in.Branch, s.actorFrom(r), in.Files)
 	respond(w, cs, err)
 }
 
 func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.mergeChangeset(r.Context(), r.PathValue("id"), s.actorFrom(r))
+	cs, err := s.mergeChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("id"), s.actorFrom(r))
 	respond(w, cs, err)
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
-	p, err := s.Store.GetProject(r.Context(), r.PathValue("ref"))
+	p, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
 	respond(w, p, err)
 }
 
 func (s *Server) listChangesets(w http.ResponseWriter, r *http.Request) {
-	changesets, err := s.Store.ListChangesets(r.Context(), r.PathValue("ref"))
+	changesets, err := s.Store.ListChangesets(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
 	respond(w, map[string]any{"changesets": changesets}, err)
 }
 
 func (s *Server) getChangeset(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.Store.GetChangeset(r.Context(), r.PathValue("id"))
+	cs, err := s.Store.GetChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("id"))
 	respond(w, cs, err)
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
-	events, err := s.Store.ListAuditEvents(r.Context(), 50)
+	events, err := s.Store.ListAuditEvents(r.Context(), orgFrom(r.Context()), 50)
 	respond(w, map[string]any{"events": events}, err)
+}
+
+// resolveOrg maps a bearer token to an organization: the root GOKU_TOKEN owns
+// the default org; signup-minted tokens resolve via the tokens table.
+func (s *Server) resolveOrg(ctx context.Context, token string) (string, bool) {
+	if token != "" && token == s.Token {
+		return s.Store.DefaultOrgID, true
+	}
+	org, err := s.Store.ResolveToken(ctx, token)
+	if err != nil {
+		return "", false
+	}
+	return org, true
 }
 
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+s.Token {
-			httpError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok {
+			httpError(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		org, ok := s.resolveOrg(r.Context(), token)
+		if !ok {
+			httpError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), orgKey, org)))
 	})
 }
 

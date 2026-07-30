@@ -3,6 +3,7 @@ build/
 data/
 web/node_modules/
 web/dist/
-.platform/
+.goku/
 *.log
 .DS_Store
+dist/

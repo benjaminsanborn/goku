@@ -8,23 +8,23 @@ goku is a control plane your agents ship through: every project gets an isolated
 
 ## Get started
 
-You need: the control plane URL and access token (from whoever operates it — see [internal/README](internal/README.md) to run your own), Go 1.25+, git, and Docker (for local cognates).
+You need: a control plane URL (see [internal/README](internal/README.md) to run your own), git, and Docker (for local cognates).
 
 ### 1. Install the CLI
 
 ```sh
-git clone https://github.com/benjaminsanborn/goku && cd goku
-go build -o /usr/local/bin/goku ./cmd/goku
+brew install benjaminsanborn/goku/goku
 ```
 
-### 2. Point it at the control plane
+(or grab a binary from [releases](https://github.com/benjaminsanborn/goku/releases), or `go build -o /usr/local/bin/goku ./cmd/goku` from a clone)
+
+### 2. Sign up
 
 ```sh
-mkdir -p ~/.config/goku && cat > ~/.config/goku/config <<EOF
-GOKU_URL=https://goku.host
-GOKU_TOKEN=<your token>
-EOF
+goku signup my-org --url https://goku.host
 ```
+
+Creates your organization and its access token, saved to `~/.config/goku/config`. The token is shown once — store it safely. Everything you create (projects, repos, changesets, audit log) is scoped to your org. On another machine, `goku login` points it at the same org.
 
 ### 3. Connect your Claude
 
@@ -32,6 +32,8 @@ EOF
 claude mcp add --transport http goku https://goku.host/mcp \
   --header "Authorization: Bearer <your token>"
 ```
+
+(the exact command, token filled in, is printed by `goku signup`)
 
 Your Claude can now `list_projects`, `create_project`, `open_changeset`, `list_changesets`, and (when you ask it to) `merge_changeset` — every action attributed to `agent:claude` in the audit feed.
 
@@ -68,6 +70,9 @@ The changeset appears in the project changelog with the full diff — including 
 
 | Command | Does |
 |---|---|
+| `goku signup <org>` | create an organization + token on the control plane |
+| `goku login` | point this machine at an existing org (paste token) |
+| `goku whoami` | show which org you're authenticated as |
 | `goku new <name>` | create project + clone + scaffold + first push |
 | `goku clone <name>` | existing project → local workspace |
 | `goku add <database\|storage> <name>` | add resource to manifest + start its cognate |

@@ -11,12 +11,12 @@ import (
 )
 
 // createProject creates the project row and its bare git repository together.
-func (s *Server) createProject(ctx context.Context, name, actor string) (*store.Project, error) {
-	p, err := s.Store.CreateProject(ctx, name, actor)
+func (s *Server) createProject(ctx context.Context, orgID, name, actor string) (*store.Project, error) {
+	p, err := s.Store.CreateProject(ctx, orgID, name, actor)
 	if err != nil {
 		return nil, err
 	}
-	if err := gitrepo.EnsureBareRepo(s.RepoPath(p.Name)); err != nil {
+	if err := gitrepo.EnsureBareRepo(s.RepoPath(orgID, p.Name)); err != nil {
 		return nil, fmt.Errorf("project created but repo init failed: %w", err)
 	}
 	return p, nil
@@ -25,12 +25,12 @@ func (s *Server) createProject(ctx context.Context, name, actor string) (*store.
 // openChangeset opens a changeset from either a branch the actor already
 // pushed, or a set of files the platform commits onto a new branch on their
 // behalf (for agents without a local workspace).
-func (s *Server) openChangeset(ctx context.Context, projectRef, title, description, branch, actor string, files []store.File) (*store.Changeset, error) {
-	p, err := s.Store.GetProject(ctx, projectRef)
+func (s *Server) openChangeset(ctx context.Context, orgID, projectRef, title, description, branch, actor string, files []store.File) (*store.Changeset, error) {
+	p, err := s.Store.GetProject(ctx, orgID, projectRef)
 	if err != nil {
 		return nil, err
 	}
-	repo := s.RepoPath(p.Name)
+	repo := s.RepoPath(orgID, p.Name)
 	if err := gitrepo.EnsureBareRepo(repo); err != nil {
 		return nil, err
 	}
@@ -58,27 +58,27 @@ func (s *Server) openChangeset(ctx context.Context, projectRef, title, descripti
 	if err != nil {
 		return nil, err
 	}
-	return s.Store.OpenChangeset(ctx, p.ID, title, description, branch, actor, head, storeFiles(diff))
+	return s.Store.OpenChangeset(ctx, orgID, p.ID, title, description, branch, actor, head, storeFiles(diff))
 }
 
 // mergeChangeset fast-forwards main to the changeset branch and marks it merged.
-func (s *Server) mergeChangeset(ctx context.Context, id, actor string) (*store.Changeset, error) {
-	cs, err := s.Store.GetChangeset(ctx, id)
+func (s *Server) mergeChangeset(ctx context.Context, orgID, id, actor string) (*store.Changeset, error) {
+	cs, err := s.Store.GetChangeset(ctx, orgID, id)
 	if err != nil {
 		return nil, err
 	}
 	if cs.Status != "open" {
 		return nil, fmt.Errorf("changeset #%d is %s, not open", cs.Number, cs.Status)
 	}
-	p, err := s.Store.GetProject(ctx, cs.ProjectID)
+	p, err := s.Store.GetProject(ctx, orgID, cs.ProjectID)
 	if err != nil {
 		return nil, err
 	}
-	mainSHA, err := gitrepo.MergeFF(s.RepoPath(p.Name), cs.Branch)
+	mainSHA, err := gitrepo.MergeFF(s.RepoPath(orgID, p.Name), cs.Branch)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.Store.MarkMerged(ctx, cs, p.Name, actor, mainSHA); err != nil {
+	if err := s.Store.MarkMerged(ctx, orgID, cs, p.Name, actor, mainSHA); err != nil {
 		return nil, err
 	}
 	cs.Status = "merged"

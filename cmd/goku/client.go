@@ -39,23 +39,29 @@ func configValue(key, fallback string) string {
 	return fallback
 }
 
-// apiCall hits the control plane REST API with the goku token.
+// apiCall hits the configured control plane with the configured token.
 func apiCall(method, p string, body any, out any) error {
+	return apiCallAt(gokuURL(), gokuToken(), method, p, body, out)
+}
+
+func apiCallAt(base, token, method, p string, body any, out any) error {
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
 			return err
 		}
 	}
-	req, err := http.NewRequest(method, gokuURL()+p, &buf)
+	req, err := http.NewRequest(method, strings.TrimSuffix(base, "/")+p, &buf)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+gokuToken())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s unreachable — is gokud running? (%w)", gokuURL(), err)
+		return fmt.Errorf("%s unreachable — is gokud running? (%w)", base, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 400 {

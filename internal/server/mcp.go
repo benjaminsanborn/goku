@@ -13,7 +13,22 @@ import (
 // The MCP actor for this dev slice; real deployments resolve token → agent identity.
 const agentActor = "agent:claude"
 
+// mcpHandler builds an MCP server per session, bound to the organization the
+// session's token resolved to (requireToken put it in the request context).
 func (s *Server) mcpHandler() http.Handler {
+	// Caddy proxies to loopback with the public Host header; the SDK's DNS-
+	// rebinding protection would 403 that. Safe to disable: /mcp requires a
+	// bearer token, which a rebinding attacker cannot attach.
+	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		org := orgFrom(r.Context())
+		if org == "" {
+			return nil // 400; requireToken should have rejected already
+		}
+		return s.buildMCPServer(org)
+	}, &mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
+}
+
+func (s *Server) buildMCPServer(org string) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "goku", Title: "Goku", Version: "0.1.0"}, nil)
 
 	type projectIn struct {
@@ -22,9 +37,9 @@ func (s *Server) mcpHandler() http.Handler {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_projects",
-		Description: "List all projects in the organization with status and changeset counts.",
+		Description: "List all projects in your organization with status and changeset counts.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, map[string]any, error) {
-		projects, err := s.Store.ListProjects(ctx)
+		projects, err := s.Store.ListProjects(ctx, org)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -38,7 +53,7 @@ func (s *Server) mcpHandler() http.Handler {
 		Name:        "create_project",
 		Description: "Create a new project: an isolated deployment target with its own git repository, which will hold curated AWS resources (API, database, load balancer, storage, web). Returns the project and its git remote URL — clone it to start a local workspace (username: claude, password: your goku token). Prefer the 'goku new' CLI when working locally: it creates, clones, and scaffolds in one step.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectIn) (*mcp.CallToolResult, map[string]any, error) {
-		p, err := s.createProject(ctx, in.Name, agentActor)
+		p, err := s.createProject(ctx, org, in.Name, agentActor)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -49,11 +64,11 @@ func (s *Server) mcpHandler() http.Handler {
 		Name:        "get_project",
 		Description: "Get a project's detail: status, region, git remote URL, and recent changesets.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, map[string]any, error) {
-		p, err := s.Store.GetProject(ctx, in.Project)
+		p, err := s.Store.GetProject(ctx, org, in.Project)
 		if err != nil {
 			return nil, nil, err
 		}
-		changesets, err := s.Store.ListChangesets(ctx, p.ID)
+		changesets, err := s.Store.ListChangesets(ctx, org, p.ID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -73,13 +88,13 @@ func (s *Server) mcpHandler() http.Handler {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "open_changeset",
-		Description: "Propose a change to a project for human review in the changelog. Preferred flow: work in a local clone, push a branch to the platform remote, then open a changeset referencing that branch. Fallback (no local workspace): provide files and the platform commits them onto a new branch. Nothing deploys until a changeset is merged.",
+		Description: "Propose a change to a project for human review in the changelog. Preferred flow: work in a local clone, push a branch to the goku remote, then open a changeset referencing that branch. Fallback (no local workspace): provide files and the platform commits them onto a new branch. Nothing deploys until a changeset is merged.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in openChangesetIn) (*mcp.CallToolResult, *store.Changeset, error) {
 		files := make([]store.File, len(in.Files))
 		for i, f := range in.Files {
 			files[i] = store.File{Path: f.Path, Content: f.Content}
 		}
-		cs, err := s.openChangeset(ctx, in.Project, in.Title, in.Description, in.Branch, agentActor, files)
+		cs, err := s.openChangeset(ctx, org, in.Project, in.Title, in.Description, in.Branch, agentActor, files)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -90,7 +105,7 @@ func (s *Server) mcpHandler() http.Handler {
 		Name:        "list_changesets",
 		Description: "List the changesets (proposed changes) for a project, newest first.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, map[string]any, error) {
-		changesets, err := s.Store.ListChangesets(ctx, in.Project)
+		changesets, err := s.Store.ListChangesets(ctx, org, in.Project)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -105,13 +120,13 @@ func (s *Server) mcpHandler() http.Handler {
 		Name:        "merge_changeset",
 		Description: "Merge an open changeset: fast-forwards main to the changeset branch. This is the approval action — normally a human clicks Merge in the UI; only call this when the human has explicitly asked you to merge.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in mergeIn) (*mcp.CallToolResult, *store.Changeset, error) {
-		changesets, err := s.Store.ListChangesets(ctx, in.Project)
+		changesets, err := s.Store.ListChangesets(ctx, org, in.Project)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, cs := range changesets {
 			if cs.Number == in.Number {
-				merged, err := s.mergeChangeset(ctx, cs.ID, agentActor)
+				merged, err := s.mergeChangeset(ctx, org, cs.ID, agentActor)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -121,9 +136,5 @@ func (s *Server) mcpHandler() http.Handler {
 		return nil, nil, fmt.Errorf("changeset #%d not found in project %q", in.Number, in.Project)
 	})
 
-	// Caddy proxies to loopback with the public Host header; the SDK's DNS-
-	// rebinding protection would 403 that. Safe to disable: /mcp requires a
-	// bearer token, which a rebinding attacker cannot attach.
-	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
-		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
+	return srv
 }

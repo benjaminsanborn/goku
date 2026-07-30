@@ -1,8 +1,11 @@
-// Package store is the persistence layer for the platform control plane.
+// Package store is the persistence layer for the goku control plane.
 package store
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +23,15 @@ create table if not exists organizations (
 	id uuid primary key default gen_random_uuid(),
 	name text not null unique,
 	created_at timestamptz not null default now()
+);
+
+create table if not exists tokens (
+	id uuid primary key default gen_random_uuid(),
+	org_id uuid not null references organizations(id),
+	label text not null default 'owner',
+	token_hash bytea not null unique,
+	created_at timestamptz not null default now(),
+	last_used_at timestamptz
 );
 
 create table if not exists projects (
@@ -61,6 +73,11 @@ create table if not exists audit_events (
 );
 `
 
+type Org struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type Project struct {
 	ID             string    `json:"id"`
 	OrgID          string    `json:"org_id"`
@@ -101,8 +118,9 @@ type AuditEvent struct {
 }
 
 type Store struct {
-	pool  *pgxpool.Pool
-	OrgID string // default org for this single-tenant dev deployment
+	pool *pgxpool.Pool
+	// DefaultOrgID backs the root GOKU_TOKEN for single-org deployments.
+	DefaultOrgID string
 }
 
 func New(ctx context.Context, dsn string) (*Store, error) {
@@ -117,7 +135,7 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	if err := s.pool.QueryRow(ctx, `
 		insert into organizations (name) values ('default')
 		on conflict (name) do update set name = excluded.name
-		returning id`).Scan(&s.OrgID); err != nil {
+		returning id`).Scan(&s.DefaultOrgID); err != nil {
 		return nil, fmt.Errorf("seed default org: %w", err)
 	}
 	return s, nil
@@ -125,31 +143,91 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
-func (s *Store) CreateProject(ctx context.Context, name, actor string) (*Project, error) {
+// --- organizations & tokens ---
+
+func (s *Store) CreateOrg(ctx context.Context, name string) (*Org, error) {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return nil, errors.New("organization name is required")
+	}
+	o := &Org{Name: name}
+	err := s.pool.QueryRow(ctx, `insert into organizations (name) values ($1) returning id`, name).Scan(&o.ID)
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			return nil, fmt.Errorf("organization %q already exists", name)
+		}
+		return nil, err
+	}
+	s.audit(ctx, o.ID, "user:owner", "org.create", "org/"+name, nil)
+	return o, nil
+}
+
+func (s *Store) GetOrg(ctx context.Context, id string) (*Org, error) {
+	o := &Org{ID: id}
+	err := s.pool.QueryRow(ctx, `select name from organizations where id = $1`, id).Scan(&o.Name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("organization: %w", ErrNotFound)
+	}
+	return o, err
+}
+
+// CreateToken mints an org-scoped bearer token. Only the hash is stored; the
+// plaintext is returned exactly once.
+func (s *Store) CreateToken(ctx context.Context, orgID, label string) (string, error) {
+	raw := make([]byte, 20)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := "gk_" + hex.EncodeToString(raw)
+	hash := sha256.Sum256([]byte(token))
+	if _, err := s.pool.Exec(ctx, `insert into tokens (org_id, label, token_hash) values ($1, $2, $3)`,
+		orgID, label, hash[:]); err != nil {
+		return "", err
+	}
+	s.audit(ctx, orgID, "user:owner", "token.create", "token/"+label, nil)
+	return token, nil
+}
+
+// ResolveToken maps a bearer token to its organization.
+func (s *Store) ResolveToken(ctx context.Context, token string) (orgID string, err error) {
+	hash := sha256.Sum256([]byte(token))
+	err = s.pool.QueryRow(ctx, `select org_id from tokens where token_hash = $1`, hash[:]).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err == nil {
+		_, _ = s.pool.Exec(ctx, `update tokens set last_used_at = now() where token_hash = $1`, hash[:])
+	}
+	return orgID, err
+}
+
+// --- projects ---
+
+func (s *Store) CreateProject(ctx context.Context, orgID, name, actor string) (*Project, error) {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return nil, errors.New("project name is required")
 	}
-	p := &Project{OrgID: s.OrgID, Name: name}
+	p := &Project{OrgID: orgID, Name: name}
 	err := s.pool.QueryRow(ctx, `
 		insert into projects (org_id, name) values ($1, $2)
 		returning id, region, status, created_at`,
-		s.OrgID, name).Scan(&p.ID, &p.Region, &p.Status, &p.CreatedAt)
+		orgID, name).Scan(&p.ID, &p.Region, &p.Status, &p.CreatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") {
 			return nil, fmt.Errorf("project %q already exists", name)
 		}
 		return nil, err
 	}
-	s.audit(ctx, actor, "project.create", "project/"+p.Name, map[string]any{"project_id": p.ID})
+	s.audit(ctx, orgID, actor, "project.create", "project/"+p.Name, map[string]any{"project_id": p.ID})
 	return p, nil
 }
 
-func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
+func (s *Store) ListProjects(ctx context.Context, orgID string) ([]Project, error) {
 	rows, err := s.pool.Query(ctx, `
 		select p.id, p.org_id, p.name, p.region, p.status, p.created_at,
 		       (select count(*) from changesets c where c.project_id = p.id)
-		from projects p where p.org_id = $1 order by p.created_at desc`, s.OrgID)
+		from projects p where p.org_id = $1 order by p.created_at desc`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,15 +243,15 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return projects, rows.Err()
 }
 
-// GetProject resolves a project by UUID or by name within the default org.
-func (s *Store) GetProject(ctx context.Context, ref string) (*Project, error) {
+// GetProject resolves a project by UUID or by name within the organization.
+func (s *Store) GetProject(ctx context.Context, orgID, ref string) (*Project, error) {
 	var p Project
 	err := s.pool.QueryRow(ctx, `
 		select p.id, p.org_id, p.name, p.region, p.status, p.created_at,
 		       (select count(*) from changesets c where c.project_id = p.id)
 		from projects p
 		where p.org_id = $1 and (p.id::text = $2 or p.name = lower($2))`,
-		s.OrgID, ref).Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.CreatedAt, &p.ChangesetCount)
+		orgID, ref).Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.CreatedAt, &p.ChangesetCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("project %q: %w", ref, ErrNotFound)
 	}
@@ -183,11 +261,13 @@ func (s *Store) GetProject(ctx context.Context, ref string) (*Project, error) {
 	return &p, nil
 }
 
-func (s *Store) OpenChangeset(ctx context.Context, projectRef, title, description, branch, actor, headSHA string, files []File) (*Changeset, error) {
+// --- changesets ---
+
+func (s *Store) OpenChangeset(ctx context.Context, orgID, projectRef, title, description, branch, actor, headSHA string, files []File) (*Changeset, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("changeset title is required")
 	}
-	p, err := s.GetProject(ctx, projectRef)
+	p, err := s.GetProject(ctx, orgID, projectRef)
 	if err != nil {
 		return nil, err
 	}
@@ -205,14 +285,14 @@ func (s *Store) OpenChangeset(ctx context.Context, projectRef, title, descriptio
 	if err != nil {
 		return nil, err
 	}
-	s.audit(ctx, actor, "changeset.open", fmt.Sprintf("project/%s/changeset/%d", p.Name, cs.Number),
+	s.audit(ctx, orgID, actor, "changeset.open", fmt.Sprintf("project/%s/changeset/%d", p.Name, cs.Number),
 		map[string]any{"title": title, "branch": branch, "head": short(headSHA), "files": len(files)})
 	return cs, nil
 }
 
 // RefreshChangesetForBranch updates open changesets tracking a branch after a push.
-func (s *Store) RefreshChangesetForBranch(ctx context.Context, projectRef, branch, headSHA string, files []File) {
-	p, err := s.GetProject(ctx, projectRef)
+func (s *Store) RefreshChangesetForBranch(ctx context.Context, orgID, projectRef, branch, headSHA string, files []File) {
+	p, err := s.GetProject(ctx, orgID, projectRef)
 	if err != nil {
 		return
 	}
@@ -226,16 +306,16 @@ func (s *Store) RefreshChangesetForBranch(ctx context.Context, projectRef, branc
 		headSHA, filesJSON, p.ID, branch)
 }
 
-func (s *Store) RecordGitPush(ctx context.Context, projectRef, actor, branch, sha string) {
-	p, err := s.GetProject(ctx, projectRef)
+func (s *Store) RecordGitPush(ctx context.Context, orgID, projectRef, actor, branch, sha string) {
+	p, err := s.GetProject(ctx, orgID, projectRef)
 	if err != nil {
 		return
 	}
-	s.audit(ctx, actor, "git.push", "project/"+p.Name, map[string]any{"branch": branch, "head": short(sha)})
+	s.audit(ctx, orgID, actor, "git.push", "project/"+p.Name, map[string]any{"branch": branch, "head": short(sha)})
 }
 
 // MarkMerged flips a changeset to merged after the repo fast-forward succeeded.
-func (s *Store) MarkMerged(ctx context.Context, cs *Changeset, projectName, actor, mainSHA string) error {
+func (s *Store) MarkMerged(ctx context.Context, orgID string, cs *Changeset, projectName, actor, mainSHA string) error {
 	tag, err := s.pool.Exec(ctx, `update changesets set status = 'merged', updated_at = now() where id = $1 and status = 'open'`, cs.ID)
 	if err != nil {
 		return err
@@ -243,20 +323,13 @@ func (s *Store) MarkMerged(ctx context.Context, cs *Changeset, projectName, acto
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("changeset #%d is not open", cs.Number)
 	}
-	s.audit(ctx, actor, "changeset.merge", fmt.Sprintf("project/%s/changeset/%d", projectName, cs.Number),
+	s.audit(ctx, orgID, actor, "changeset.merge", fmt.Sprintf("project/%s/changeset/%d", projectName, cs.Number),
 		map[string]any{"branch": cs.Branch, "main": short(mainSHA)})
 	return nil
 }
 
-func short(sha string) string {
-	if len(sha) > 8 {
-		return sha[:8]
-	}
-	return sha
-}
-
-func (s *Store) ListChangesets(ctx context.Context, projectRef string) ([]Changeset, error) {
-	p, err := s.GetProject(ctx, projectRef)
+func (s *Store) ListChangesets(ctx context.Context, orgID, projectRef string) ([]Changeset, error) {
+	p, err := s.GetProject(ctx, orgID, projectRef)
 	if err != nil {
 		return nil, err
 	}
@@ -270,10 +343,11 @@ func (s *Store) ListChangesets(ctx context.Context, projectRef string) ([]Change
 	return scanChangesets(rows)
 }
 
-func (s *Store) GetChangeset(ctx context.Context, id string) (*Changeset, error) {
+func (s *Store) GetChangeset(ctx context.Context, orgID, id string) (*Changeset, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, project_id, number, title, description, branch, status, opened_by, head_sha, files, created_at, updated_at
-		from changesets where id::text = $1`, id)
+		select c.id, c.project_id, c.number, c.title, c.description, c.branch, c.status, c.opened_by, c.head_sha, c.files, c.created_at, c.updated_at
+		from changesets c join projects p on p.id = c.project_id
+		where c.id::text = $1 and p.org_id = $2`, id, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -305,13 +379,15 @@ func scanChangesets(rows pgx.Rows) ([]Changeset, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, error) {
+// --- audit ---
+
+func (s *Store) ListAuditEvents(ctx context.Context, orgID string, limit int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	rows, err := s.pool.Query(ctx, `
 		select seq, actor, action, subject, detail, at
-		from audit_events where org_id = $1 order by seq desc limit $2`, s.OrgID, limit)
+		from audit_events where org_id = $1 order by seq desc limit $2`, orgID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -331,10 +407,19 @@ func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]AuditEvent, e
 	return events, rows.Err()
 }
 
-func (s *Store) audit(ctx context.Context, actor, action, subject string, detail map[string]any) {
+func (s *Store) audit(ctx context.Context, orgID, actor, action, subject string, detail map[string]any) {
+	if detail == nil {
+		detail = map[string]any{}
+	}
 	detailJSON, _ := json.Marshal(detail)
 	// Audit failure must not fail the action in the dev slice; production hash-chains this in-transaction.
 	_, _ = s.pool.Exec(ctx, `insert into audit_events (org_id, actor, action, subject, detail) values ($1, $2, $3, $4, $5)`,
-		s.OrgID, actor, action, subject, detailJSON)
+		orgID, actor, action, subject, detailJSON)
 }
 
+func short(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}

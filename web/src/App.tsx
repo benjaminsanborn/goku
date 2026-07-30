@@ -55,7 +55,10 @@ function TokenGate({ onSave }: { onSave: () => void }) {
         <div className="brand" style={{ marginBottom: 12 }}>
           <span className="dot">◆</span> goku
         </div>
-        <p className="page-sub">Enter the access token for this control plane (on the server: ~/.goku-token).</p>
+        <p className="page-sub">
+          Enter your organization token — create one with <code>goku signup &lt;org-name&gt;</code> (operators: the
+          root token lives in ~/.goku-token on the server).
+        </p>
         <div className="row">
           <input
             className="input"

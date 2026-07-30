@@ -7,9 +7,15 @@ import (
 	"os"
 )
 
+// version is stamped by goreleaser via ldflags.
+var version = "dev"
+
 const usage = `goku — compliant CI/CD for agents
 
 Usage:
+  goku signup <org-name>     create an organization + token on the control plane
+  goku login                 point this machine at an existing org (paste token)
+  goku whoami                show which org you're authenticated as
   goku new <name>            create a project, clone it, scaffold the workspace
   goku clone <name>          clone an existing project into ./<name>
   goku add <type> <name>     add a resource to goku.yaml and start its local cognate
@@ -33,6 +39,14 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "signup":
+		err = cmdSignup(os.Args[2:])
+	case "login":
+		err = cmdLogin(os.Args[2:])
+	case "whoami":
+		err = cmdWhoami()
+	case "version", "-v", "--version":
+		fmt.Println("goku", version)
 	case "new":
 		err = cmdNew(os.Args[2:])
 	case "clone":
