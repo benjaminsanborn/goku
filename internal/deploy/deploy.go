@@ -251,9 +251,10 @@ func BuildWebImage(repoPath, project, sha string, svc Service, logf Logf) (strin
 	if _, err := run(logf, "cp", "-r", assets, serveDir+"/dist"); err != nil {
 		return "", err
 	}
-	caddyfile := ":{$PORT}\nroot * /srv\nencode gzip\nfile_server\n"
+	// admin off: host networking would collide with the host caddy's :2019.
+	caddyfile := "{\n\tadmin off\n}\n:{$PORT}\nroot * /srv\nencode gzip\nfile_server\n"
 	if svc.SPA {
-		caddyfile = ":{$PORT}\nroot * /srv\nencode gzip\ntry_files {path} /index.html\nfile_server\n"
+		caddyfile = "{\n\tadmin off\n}\n:{$PORT}\nroot * /srv\nencode gzip\ntry_files {path} /index.html\nfile_server\n"
 	}
 	os.WriteFile(serveDir+"/Caddyfile", []byte(caddyfile), 0o644)
 	os.WriteFile(serveDir+"/Dockerfile", []byte("FROM caddy:2-alpine\nCOPY dist /srv\nCOPY Caddyfile /etc/caddy/Caddyfile\n"), 0o644)
