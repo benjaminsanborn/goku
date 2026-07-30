@@ -109,11 +109,7 @@ export default function ProjectPage() {
       {deployments?.deployments.length === 0 ? (
         <p className="page-sub">No deployments yet — Deploy builds this branch's Dockerfile and runs it on the goku host.</p>
       ) : (
-        <div className="list">
-          {deployments?.deployments.map((d) => (
-            <DeploymentRow key={d.id} d={d} />
-          ))}
-        </div>
+        <Environments deployments={deployments?.deployments ?? []} />
       )}
 
       <h2 className="section-h">Secrets</h2>
@@ -164,6 +160,66 @@ function DeployButton({ projectRef, branch }: { projectRef: string; branch: stri
         {busy ? 'Starting…' : `Deploy ${branch}`}
       </button>
     </>
+  )
+}
+
+// Environments groups deployments by branch: each environment shows its
+// current live deployment, and expands into that environment's history.
+function Environments({ deployments }: { deployments: Deployment[] }) {
+  const [open, setOpen] = useState<string | null>(null)
+
+  const byBranch = new Map<string, Deployment[]>()
+  for (const d of deployments) {
+    const list = byBranch.get(d.branch) ?? []
+    list.push(d)
+    byBranch.set(d.branch, list)
+  }
+  const envs = [...byBranch.entries()].sort((a, b) => {
+    const liveA = a[1].some((d) => d.status === 'healthy') ? 0 : 1
+    const liveB = b[1].some((d) => d.status === 'healthy') ? 0 : 1
+    return liveA - liveB || a[0].localeCompare(b[0])
+  })
+
+  return (
+    <div className="list">
+      {envs.map(([branchName, history]) => {
+        const live = history.find((d) => d.status === 'healthy')
+        const latest = history[0]
+        const expanded = open === branchName
+        return (
+          <div className="cs-item" key={branchName} style={{ cursor: 'pointer' }} onClick={() => setOpen(expanded ? null : branchName)}>
+            <div className="row">
+              <span className={`pill ${live ? 'merged' : 'human'}`}>{live ? 'live' : 'stopped'}</span>
+              <span className="branch-name" style={{ fontSize: 15 }}>{branchName}</span>
+              {live && (
+                <>
+                  <span className="branch-sha">{live.sha.slice(0, 8)}</span>
+                  {live.url && (
+                    <a href={live.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 13 }}
+                      onClick={(e) => e.stopPropagation()}>
+                      {live.url.replace('https://', '')}
+                    </a>
+                  )}
+                </>
+              )}
+              {!live && latest && <span className={`pill ${latest.status === 'failed' ? 'agent' : 'human'}`}>{latest.status}</span>}
+              <div className="spacer" />
+              <span className="branch-when">
+                {history.length} deploy{history.length === 1 ? '' : 's'} · {timeAgo(latest.created_at)}
+              </span>
+              <span className="branch-sha">{expanded ? '▾' : '▸'}</span>
+            </div>
+            {expanded && (
+              <div className="list" style={{ marginTop: 12 }} onClick={(e) => e.stopPropagation()}>
+                {history.map((d) => (
+                  <DeploymentRow key={d.id} d={d} />
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
