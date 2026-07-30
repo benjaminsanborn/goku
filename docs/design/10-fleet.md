@@ -45,9 +45,11 @@ instances (
 deployments += instance_id              -- where it ran
 ```
 
-The control-plane host is auto-registered as instance `goku-host`
-(driver `local`) in the operator's org, so the Fleet tab is truthful from
-day one: it already shows goku running `goku · main`.
+Instances are uniform — there is no "head" or special node. Where gokud
+itself runs is an operational detail invisible to normal users (it's just
+the SaaS API). It happens that the operator dogfoods goku, so their fleet
+member `ubuntu` shows an ordinary assignment: `goku · main`. Nothing in the
+model distinguishes it.
 
 ## Enrolling an instance
 
@@ -78,9 +80,10 @@ docs.
 
 - `goku deploy <branch> --on <instance>` / instance picker in the UI deploy
   button / MCP `deploy_project` gains an optional `instance`.
-- No instance named → placement rule: `main` goes to the project's **home
-  instance** (sticky, default `goku-host`); other branches go to any `ready`
-  + idle instance, else error "fleet is full — add an instance or free one".
+- No instance named → placement is **sticky per assignment**: a redeploy of
+  `project · branch` goes to the instance already running it; a fresh
+  assignment takes any `ready` + idle instance, else error "fleet is full —
+  add an instance or free one".
 - The engine's steps become driver operations. The trick that keeps the ssh
   driver small: **docker build accepts a tar context on stdin**, so build is
   `git archive <sha> | ssh <instance> docker build -t <img> -` — no registry,
