@@ -9,10 +9,16 @@ export default function ProjectsPage() {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
 
+  const isImport = /github\.com\//.test(name) || /^[\w.-]+\/[\w.-]+$/.test(name.trim())
+
   const create = async () => {
     if (!name.trim()) return
     try {
-      await api('/projects', { method: 'POST', body: JSON.stringify({ name }) })
+      if (isImport) {
+        await api('/projects/import', { method: 'POST', body: JSON.stringify({ url: name.trim() }) })
+      } else {
+        await api('/projects', { method: 'POST', body: JSON.stringify({ name }) })
+      }
       setName('')
       setError('')
     } catch (e) {
@@ -30,13 +36,14 @@ export default function ProjectsPage() {
         <div className="spacer" />
         <input
           className="input"
-          placeholder="new-project-name"
+          style={{ width: 260 }}
+          placeholder="new-project or github.com/owner/repo"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && create()}
         />
         <button className="btn" onClick={create}>
-          Create
+          {isImport ? 'Import' : 'Create'}
         </button>
       </div>
       {error && <p style={{ color: 'var(--amber)' }}>{error}</p>}

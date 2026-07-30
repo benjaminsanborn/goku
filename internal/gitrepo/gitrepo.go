@@ -55,10 +55,55 @@ func EnsureBareRepo(path string) error {
 	if _, err := git("", "init", "--bare", "--initial-branch=main", path); err != nil {
 		return err
 	}
+	return InstallHooks(path)
+}
+
+// InstallHooks configures a bare repo for platform serving: push enabled over
+// smart HTTP and main protected by the pre-receive hook.
+func InstallHooks(path string) error {
 	if _, err := git(path, "config", "http.receivepack", "true"); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(path, "hooks", "pre-receive"), []byte(preReceiveHook), 0o755)
+}
+
+// CloneBareFrom imports an external repository (full history, branches, tags)
+// as a platform bare repo, normalizes main as the default branch, and
+// installs hooks. The path must not already contain a repo.
+func CloneBareFrom(url, path string) error {
+	if _, err := os.Stat(filepath.Join(path, "HEAD")); err == nil {
+		return fmt.Errorf("repo already exists")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if _, err := git("", "clone", "--bare", "--quiet", url, path); err != nil {
+		return err
+	}
+	// Normalize: main must exist and be HEAD (the platform's protected branch).
+	if _, err := Head(path, "main"); err != nil {
+		defaultRef, err := git(path, "symbolic-ref", "HEAD")
+		if err != nil {
+			return err
+		}
+		defaultSHA, err := git(path, "rev-parse", defaultRef)
+		if err != nil {
+			return fmt.Errorf("imported repo has no commits")
+		}
+		if _, err := git(path, "update-ref", "refs/heads/main", defaultSHA); err != nil {
+			return err
+		}
+	}
+	if _, err := git(path, "symbolic-ref", "HEAD", "refs/heads/main"); err != nil {
+		return err
+	}
+	return InstallHooks(path)
+}
+
+// HasFile reports whether a path exists at the tip of a branch.
+func HasFile(path, branch, file string) bool {
+	_, err := git(path, "cat-file", "-e", branch+":"+file)
+	return err == nil
 }
 
 // Refs returns branch name → sha for all heads.

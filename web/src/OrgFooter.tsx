@@ -1,20 +1,26 @@
 import { useState } from 'react'
 import { getToken, setToken, usePoll } from './api'
 
-type Me = { organization: { id: string; name: string } }
+type Me = {
+  organization: { id: string; name: string } | null
+  user?: { email: string; name: string; avatar_url: string }
+}
 
 export default function OrgFooter() {
   const me = usePoll<Me>('/me', 60000)
   const [open, setOpen] = useState(() => window.location.hash === '#org')
 
-  if (!me) return null
+  if (!me?.organization) return null
   const org = me.organization
 
   return (
     <>
       <button className="org-footer" onClick={() => setOpen(true)} title="Organization details">
-        <span className="org-dot">●</span>
-        <span className="org-name">{org.name}</span>
+        {me.user?.avatar_url ? <img className="org-avatar" src={me.user.avatar_url} alt="" /> : <span className="org-dot">●</span>}
+        <span>
+          <span className="org-name">{org.name}</span>
+          {me.user && <span className="org-user">{me.user.email}</span>}
+        </span>
       </button>
 
       {open && (
@@ -29,6 +35,11 @@ export default function OrgFooter() {
                 ✕
               </button>
             </div>
+            {me.user && (
+              <p className="meta-line">
+                signed in as <code>{me.user.email}</code> ({me.user.name})
+              </p>
+            )}
             <p className="meta-line">
               org id <code>{org.id}</code>
             </p>
@@ -52,7 +63,8 @@ export default function OrgFooter() {
               <div className="spacer" />
               <button
                 className="btn ghost"
-                onClick={() => {
+                onClick={async () => {
+                  await fetch('/v1/logout', { method: 'POST' }).catch(() => {})
                   setToken('')
                   window.location.reload()
                 }}

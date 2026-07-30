@@ -31,7 +31,11 @@ Auth model: organizations are provisioned **by the operator, on the server host 
 ssh <host> 'sudo -n -u goku /opt/goku/bin/gokud create-org <name>'
 ```
 
-This mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table; plaintext shown once) — hand it to the user, who runs `goku login`. Every API route requires a token; all data — projects, repos on disk (`repos/<org-id>/`), changesets, audit events — is scoped to the token's org. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator. `X-Goku-Actor: operator` distinguishes the UI from agents in the audit trail; per-agent identities are designed in [docs/design/06](../docs/design/06-security-compliance.md).
+This mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table; plaintext shown once) — hand it to the user, who runs `goku login`. Every API route requires auth; all data — projects, repos on disk (`repos/<org-id>/`), changesets, audit events — is org-scoped. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator.
+
+**Human sign-in (SSO)**: the UI supports GitHub and Google OAuth once configured in `/etc/goku/gokud.env` (`GOKU_GITHUB_CLIENT_ID/SECRET`, `GOKU_GOOGLE_CLIENT_ID/SECRET`; callback URLs `https://<domain>/auth/{github,google}/callback`; GitHub scope includes `repo` to power private-repo import). SSO is **login, not signup**: a new user lands on a join screen and redeems an org token once; membership recorded, and their writes audit as `user:<email>`. Sessions are 30-day HttpOnly cookies (hashed in the `sessions` table). Agents and the CLI keep using bearer tokens (`agent:*` actors).
+
+**GitHub import**: `POST /v1/projects/import` bare-clones the repo into the org's repo dir (all branches/tags preserved, `main` normalized as default + protected) and opens an "Adopt goku standard" changeset. Private repos use the importing user's GitHub OAuth token, falling back to any org member's.
 
 Releases: GoReleaser runs on `v*` tags ([.github/workflows/release.yml](../.github/workflows/release.yml)) — CLI binaries for darwin/linux, `gokud` for linux, plus a Homebrew formula pushed to [benjaminsanborn/homebrew-goku](https://github.com/benjaminsanborn/homebrew-goku). Requires the `GH_TOKEN` repo secret (a PAT that can push to the tap).
 

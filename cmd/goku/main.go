@@ -16,6 +16,7 @@ Usage:
   goku login                 authenticate with your organization token
   goku whoami                show which org you're authenticated as
   goku new <name>            create a project, clone it, scaffold the workspace
+  goku import <repo> [name]  import a GitHub repo as a project (history preserved)
   goku clone <name>          clone an existing project into ./<name>
   goku add <type> <name>     add a resource to goku.yaml and start its local cognate
                                  (types: database, storage)
@@ -49,6 +50,8 @@ func main() {
 		fmt.Println("goku", version)
 	case "new":
 		err = cmdNew(os.Args[2:])
+	case "import":
+		err = cmdImport(os.Args[2:])
 	case "clone":
 		err = cmdClone(os.Args[2:])
 	case "add":

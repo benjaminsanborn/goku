@@ -106,6 +106,7 @@ RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/goku
+PrivateTmp=true
 ProtectHome=true
 
 [Install]

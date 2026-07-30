@@ -15,11 +15,19 @@ import (
 
 type ctxKey int
 
-const orgKey ctxKey = iota
+const (
+	orgKey ctxKey = iota
+	userKey
+)
 
 func orgFrom(ctx context.Context) string {
 	org, _ := ctx.Value(orgKey).(string)
 	return org
+}
+
+func userFrom(ctx context.Context) *store.User {
+	u, _ := ctx.Value(userKey).(*store.User)
+	return u
 }
 
 type Server struct {
@@ -29,6 +37,7 @@ type Server struct {
 	WebDist string
 	DataDir string
 	BaseURL string
+	OAuth   OAuthConfig
 }
 
 func (s *Server) Handler() http.Handler {
@@ -44,11 +53,19 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/changesets/{id}/merge", s.handleMerge)
 	api.HandleFunc("GET /v1/events", s.listEvents)
 	api.HandleFunc("GET /v1/me", s.handleMe)
+	api.HandleFunc("POST /v1/orgs/join", s.handleJoinOrg)
+	api.HandleFunc("POST /v1/projects/import", s.handleImport)
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/", s.requireToken(api))
+	mux.HandleFunc("GET /auth/providers", s.handleProviders)
+	mux.HandleFunc("GET /auth/github", s.handleAuthStart(s.githubOAuth))
+	mux.HandleFunc("GET /auth/github/callback", s.handleAuthCallback("github", s.githubOAuth))
+	mux.HandleFunc("GET /auth/google", s.handleAuthStart(s.googleOAuth))
+	mux.HandleFunc("GET /auth/google/callback", s.handleAuthCallback("google", s.googleOAuth))
+	mux.HandleFunc("POST /v1/logout", s.handleLogout)
+	mux.Handle("/v1/", s.requireAuth(api))
 	mux.Handle("/git/", s.gitHandler())
-	mux.Handle("/mcp", s.requireToken(s.mcpHandler()))
+	mux.Handle("/mcp", s.requireAuth(s.mcpHandler()))
 	mux.Handle("/", s.spaHandler())
 
 	return cors(mux)
@@ -58,14 +75,35 @@ func (s *Server) Handler() http.Handler {
 // (gokud create-org); there is deliberately no network signup surface.
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	org, err := s.Store.GetOrg(r.Context(), orgFrom(r.Context()))
-	respond(w, map[string]any{"organization": org}, err)
+	out := map[string]any{}
+	if user := userFrom(r.Context()); user != nil {
+		out["user"] = user
+		orgs, err := s.Store.UserOrgs(r.Context(), user.ID)
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		out["organizations"] = orgs
+	}
+	if orgID := orgFrom(r.Context()); orgID != "" {
+		org, err := s.Store.GetOrg(r.Context(), orgID)
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		out["organization"] = org
+	} else {
+		out["organization"] = nil
+	}
+	respond(w, out, nil)
 }
 
-// actorFrom attributes an authenticated write. The single-token dev slice
-// can't distinguish identities, so the UI self-identifies as the operator;
-// real token→identity mapping is designed in docs/design/06.
+// actorFrom attributes an authenticated write: session users act as
+// themselves; token callers are agents (or the operator UI via header).
 func (s *Server) actorFrom(r *http.Request) string {
+	if user := userFrom(r.Context()); user != nil {
+		return "user:" + user.Email
+	}
 	if r.Header.Get("X-Goku-Actor") == "operator" {
 		return "user:operator"
 	}
@@ -146,19 +184,38 @@ func (s *Server) resolveOrg(ctx context.Context, token string) (string, bool) {
 	return org, true
 }
 
-func (s *Server) requireToken(next http.Handler) http.Handler {
+// requireAuth accepts a browser session cookie (human) or a bearer token
+// (agent/CLI). Session users without an org membership may only reach /v1/me
+// and /v1/orgs/join — enough to see who they are and redeem an invite.
+func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		if c, err := r.Cookie(sessionCookie); err == nil {
+			user, org, err := s.Store.ResolveSession(ctx, c.Value)
+			if err == nil {
+				if org == "" && r.URL.Path != "/v1/me" && r.URL.Path != "/v1/orgs/join" {
+					httpError(w, http.StatusForbidden, "join an organization first")
+					return
+				}
+				ctx = context.WithValue(ctx, userKey, user)
+				ctx = context.WithValue(ctx, orgKey, org)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok {
-			httpError(w, http.StatusUnauthorized, "missing bearer token")
+			httpError(w, http.StatusUnauthorized, "sign in or provide a bearer token")
 			return
 		}
-		org, ok := s.resolveOrg(r.Context(), token)
+		org, ok := s.resolveOrg(ctx, token)
 		if !ok {
 			httpError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), orgKey, org)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, orgKey, org)))
 	})
 }
 

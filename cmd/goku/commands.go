@@ -60,6 +60,34 @@ func cmdNew(args []string) error {
 	return nil
 }
 
+func cmdImport(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: goku import <github.com/owner/repo> [name]")
+	}
+	body := map[string]string{"url": args[0]}
+	if len(args) > 1 {
+		body["name"] = args[1]
+	}
+	var resp struct {
+		Project struct {
+			Name string `json:"name"`
+		} `json:"project"`
+		Changeset struct {
+			ID     string `json:"id"`
+			Number int    `json:"number"`
+		} `json:"changeset"`
+		Imported string `json:"imported"`
+	}
+	if err := apiCall("POST", "/v1/projects/import", body, &resp); err != nil {
+		return err
+	}
+	fmt.Printf("imported %s → project %s (full history preserved)\n", resp.Imported, resp.Project.Name)
+	fmt.Printf("changeset #%d \"Adopt goku standard\" is open for review:\n", resp.Changeset.Number)
+	fmt.Printf("  %s/projects/%s/changesets/%s\n", gokuURL(), resp.Project.Name, resp.Changeset.ID)
+	fmt.Printf("next: goku clone %s\n", resp.Project.Name)
+	return nil
+}
+
 func cmdClone(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: goku clone <name>")

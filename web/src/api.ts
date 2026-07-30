@@ -43,12 +43,14 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY) ?? ''
 export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t)
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  // Session cookie is the primary auth; the token header is the fallback for
+  // operator/token-based access and is omitted when no token is stored.
+  const token = getToken()
   const res = await fetch(BASE + path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`,
-      'X-Goku-Actor': 'operator',
+      ...(token ? { Authorization: `Bearer ${token}`, 'X-Goku-Actor': 'operator' } : {}),
       ...init?.headers,
     },
   })

@@ -39,7 +39,15 @@ func main() {
 	}
 	defer st.Close()
 
-	srv := &server.Server{Store: st, Token: token, WebDist: webDist, DataDir: dataDir, BaseURL: baseURL}
+	srv := &server.Server{
+		Store: st, Token: token, WebDist: webDist, DataDir: dataDir, BaseURL: baseURL,
+		OAuth: server.OAuthConfig{
+			GitHubClientID:     os.Getenv("GOKU_GITHUB_CLIENT_ID"),
+			GitHubClientSecret: os.Getenv("GOKU_GITHUB_CLIENT_SECRET"),
+			GoogleClientID:     os.Getenv("GOKU_GOOGLE_CLIENT_ID"),
+			GoogleClientSecret: os.Getenv("GOKU_GOOGLE_CLIENT_SECRET"),
+		},
+	}
 
 	fmt.Printf("gokud — control plane\n")
 	fmt.Printf("  ui:   %s\n", baseURL)

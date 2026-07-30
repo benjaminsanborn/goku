@@ -26,19 +26,22 @@ goku login
 
 Paste the organization token your operator issued you (organizations are created by the operator — see [internal/README](internal/README.md)). The token is saved to `~/.config/goku/config`, and everything you create (projects, repos, changesets, audit log) is scoped to your org.
 
+In the web UI you can instead **sign in with GitHub or Google** (when the operator has configured the providers) — on first sign-in you redeem the same org token once to join, and from then on every action you take is attributed to your own identity (`user:you@example.com`) in the audit feed rather than the shared token.
+
 **That's the whole Claude integration too**: `goku login` registers goku with Claude Code automatically (a stdio MCP server, `goku mcp`, that reads your saved config — your token never enters Claude's own configuration). Every goku workspace also carries a committed `.mcp.json`, so any Claude opened inside one picks up the tools on its own. Manual fallback: `claude mcp add -s user goku -- goku mcp`.
 
 Your Claude then has intent-shaped tools: `setup_project` ("set up a new goku project called demo"), `start_change` / `propose_change` ("in my goku project hello-world, fix the formatting" → branch, edit, submit for review), `add_resource`, `project_status`, `list_projects`, and `merge_change` (which it may only use when you explicitly ask).
 
 Your Claude can now `list_projects`, `create_project`, `open_changeset`, `list_changesets`, and (when you ask it to) `merge_changeset` — every action attributed to `agent:claude` in the audit feed.
 
-### 4. Create a project
+### 4. Create a project — or import one from GitHub
 
 ```sh
-goku new demo && cd demo
+goku new demo && cd demo                  # fresh project
+goku import github.com/you/existing-app   # or bring an existing repo
 ```
 
-One command: creates the project, clones its repo, scaffolds `goku.yaml`, pushes the initial commit. It's immediately visible in the UI. From here `main` is protected — it only moves by merging a changeset.
+`goku new` creates the project, clones its repo, scaffolds `goku.yaml`, and pushes the initial commit. `goku import` brings a GitHub repo over **with full history** (private repos work once someone in your org has signed in with GitHub) and opens an *"Adopt goku standard"* changeset proposing the goku scaffolding — review it, merge it, and continue adapting the app (Dockerfile, env contract) through normal changesets, which is exactly the kind of work your Claude is good at. Both are also available in the UI (the create field accepts `owner/repo`) and as MCP tools. From here `main` is protected — it only moves by merging a changeset.
 
 ### 5. Declare what you need; develop against cognates
 

@@ -51,6 +51,26 @@ func cmdMCP() error {
 		}, nil
 	})
 
+	type importIn struct {
+		URL  string `json:"url" jsonschema:"GitHub repository, e.g. github.com/owner/repo or owner/repo"`
+		Name string `json:"name,omitempty" jsonschema:"goku project name; defaults to the repo name"`
+	}
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "import_project",
+		Description: "Import an existing GitHub repository as a goku project: full git history is preserved and a changeset titled 'Adopt goku standard' is opened proposing the goku scaffolding (goku.yaml manifest, .mcp.json). Use when the user asks to bring an existing repo into goku. Afterwards, use start_change to continue adapting the code (Dockerfile, env contract) through normal changesets.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in importIn) (*mcp.CallToolResult, map[string]any, error) {
+		body := map[string]string{"url": in.URL}
+		if in.Name != "" {
+			body["name"] = in.Name
+		}
+		var out map[string]any
+		if err := apiCall("POST", "/v1/projects/import", body, &out); err != nil {
+			return nil, nil, err
+		}
+		out["next"] = "Review the adoption changeset (or merge it if the user approves), then use start_change to adapt the app: ensure a Dockerfile, declare resources with add_resource, wire the env contract."
+		return nil, out, nil
+	})
+
 	type startIn struct {
 		Project string `json:"project" jsonschema:"goku project name"`
 		Slug    string `json:"slug" jsonschema:"short kebab-case name for this change, e.g. fix-formatting"`
