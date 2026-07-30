@@ -70,13 +70,12 @@ func ParseManifest(raw string) (*Manifest, error) {
 	return &Manifest{Services: doc.Services, Resources: doc.Resources, Routes: doc.Routes}, nil
 }
 
-// Port allocates a host port per deployment (project+sha) so a new container
-// never fights its predecessor for the same bind — blue-green needs both
-// alive at once. avoid is the currently-routed port, stepped over on the
-// rare hash collision.
-func Port(project, service, sha string, avoid map[int]bool) int {
+// Port allocates a host port per deployment (seeded by the deployment id,
+// not the sha, so even a same-sha redeploy never fights its predecessor for
+// a bind — blue-green needs both alive at once).
+func Port(project, service, seed string, avoid map[int]bool) int {
 	h := fnv.New32a()
-	h.Write([]byte("app/" + project + "/" + service + "/" + sha))
+	h.Write([]byte("app/" + project + "/" + service + "/" + seed))
 	p := 30000 + int(h.Sum32()%10000)
 	for avoid[p] {
 		p++

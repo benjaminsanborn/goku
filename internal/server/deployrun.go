@@ -212,7 +212,7 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 			}
 		}
 
-		port := deploy.Port(p.Name, name, d.SHA, usedPorts)
+		port := deploy.Port(p.Name, name, d.ID, usedPorts)
 		usedPorts[port] = true
 		svcPorts[name] = port
 

@@ -58,6 +58,11 @@ password, OAuth, webhook secret, mounts paths); `host_mounts` in goku.yaml
 (operator-org only) give it the machine: `/var/lib/goku` repos, docker.sock,
 `/etc/goku` (apps.caddy), `/etc/caddy` (ro).
 
+Databases (the control plane's own included) run as per-project postgres:18
+containers (`goku-db-<project>-<resource>`, named volume, 127.0.0.1-published
+port); the host postgres is no longer used and holds a stale pre-migration
+copy of the goku db as a cold fallback.
+
 **Break-glass**: if the container is wedged, the pre-cutover binary and unit
 still exist: `sudo systemctl start gokud` (serves :8080) and point goku.host
 at it in `/etc/goku/apps.caddy` (`reverse_proxy localhost:8080`), then
