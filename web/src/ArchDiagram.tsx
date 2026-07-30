@@ -19,14 +19,18 @@ export type Unit = {
   port?: number
 }
 
-const SERVICE_INFO: Record<string, { cloud: string; local: string }> = {
-  api: { cloud: 'Fargate service', local: 'Dockerfile locally' },
-  web: { cloud: 'CloudFront + S3', local: 'static server locally' },
+// shortImage keeps image labels readable: goku-app/goku:47084b616879 → goku:47084b61
+const shortImage = (img: string) => {
+  const [name, tag] = img.split(':')
+  const base = name.split('/').pop() ?? name
+  return tag && tag.length > 8 ? `${base}:${tag.slice(0, 8)}` : img === name ? base : `${base}:${tag}`
 }
 
-const RESOURCE_INFO: Record<string, { cloud: string; local: string }> = {
-  database: { cloud: 'Aurora PostgreSQL', local: 'postgres:18 locally' },
-  storage: { cloud: 'S3 bucket', local: 'MinIO locally' },
+const TYPE_LABEL: Record<string, string> = {
+  api: 'docker service',
+  web: 'static server',
+  database: 'postgres',
+  storage: 'object storage',
 }
 
 // ArchDiagram renders the architecture a branch's goku.yaml declares:
@@ -105,19 +109,18 @@ export default function ArchDiagram({
     )
   }
 
-  const serviceNodes = services.map((s) =>
-    node(
-      s.name,
-      'service',
-      'service',
-      s.name,
-      SERVICE_INFO[s.type]?.cloud ?? s.type,
-      [s.size, s.port ? `:${s.port}` : '', s.health_check ? `health ${s.health_check}` : ''].filter(Boolean).join(' · '),
-    ),
-  )
-  const resourceNodes = resources.map((r) =>
-    node(r.name, 'database', 'resource', r.name, RESOURCE_INFO[r.type]?.cloud ?? r.type, RESOURCE_INFO[r.type]?.local ?? ''),
-  )
+  const serviceNodes = services.map((s) => {
+    const u = unitFor(s.name, 'service')
+    const sub = u?.image ? shortImage(u.image) : TYPE_LABEL[s.type] ?? s.type
+    const meta = u?.port ? `:${u.port}` : s.port ? `:${s.port} declared` : ''
+    return node(s.name, 'service', 'service', s.name, sub, meta)
+  })
+  const resourceNodes = resources.map((r) => {
+    const u = unitFor(r.name, 'database')
+    const sub = u?.image ? shortImage(u.image) : TYPE_LABEL[r.type] ?? r.type
+    const meta = u?.port ? `:${u.port}` : ''
+    return node(r.name, 'database', 'resource', r.name, sub, meta)
+  })
 
   const inner = (
     <>
