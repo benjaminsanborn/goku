@@ -25,7 +25,8 @@ Usage:
   goku env                   print the injected environment contract
   goku run -- <cmd> [args]   run a command with the environment injected
   goku push                  push the current branch for review
-  goku deploy [branch]       build + run the branch as a container on the goku host
+  goku deploy [branch] [--on instance]
+                                 deploy a branch as a live environment
   goku secrets set|list|rm   write-only env secrets injected into deployments
   goku logs [service] [-f]   tail a deployed service's logs (api, web, db…)
   goku status                show project status and branches

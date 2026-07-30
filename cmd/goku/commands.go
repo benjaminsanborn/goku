@@ -104,11 +104,17 @@ func cmdDeploy(args []string) error {
 		return fmt.Errorf("run inside a goku workspace: %w", err)
 	}
 	branch := "main"
-	if len(args) > 0 {
-		branch = args[0]
+	instance := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--on" && i+1 < len(args) {
+			instance = args[i+1]
+			i++
+		} else {
+			branch = args[i]
+		}
 	}
 	var d deployment
-	if err := apiCall("POST", "/v1/projects/"+project+"/deploy", map[string]string{"branch": branch}, &d); err != nil {
+	if err := apiCall("POST", "/v1/projects/"+project+"/deploy", map[string]string{"branch": branch, "instance": instance}, &d); err != nil {
 		return err
 	}
 	fmt.Printf("deploying %s @ %s (%s)\n", branch, d.SHA[:8], project)

@@ -63,7 +63,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	// Running containers, keyed by name.
 	type dockerInfo struct{ image, status string }
 	containers := map[string]dockerInfo{}
-	for _, prefix := range []string{deploy.ServiceContainerPrefix(p.Name), "goku-db-"} {
+	for _, prefix := range []string{deploy.ServiceContainerPrefix(p.Name, "main"), "goku-db-"} {
 		out, err := exec.Command("docker", "ps", "-a", "--filter", "name="+prefix, "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}").Output()
 		if err != nil {
 			continue
@@ -79,7 +79,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	units := []serviceUnit{}
 	if raw, err := gitrepo.FileAt(s.RepoPath(org, p.Name), "main", "goku.yaml"); err == nil {
 		if manifest, err := deploy.ParseManifest(raw); err == nil {
-			svcPrefix := deploy.ServiceContainerPrefix(p.Name)
+			svcPrefix := deploy.ServiceContainerPrefix(p.Name, "main")
 			for name, svc := range manifest.Services {
 				u := serviceUnit{Name: name, Kind: "service", Type: svc.Type, Instance: instance, Status: "not_deployed", Port: svcPorts[name]}
 				// newest matching container: goku-svc-<p>-<name>-<ts>
@@ -104,7 +104,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 				if res.Type != "database" {
 					continue
 				}
-				cname := deploy.DBContainerName(p.Name, name)
+				cname := deploy.DBContainerName(p.Name, "main", name)
 				u := serviceUnit{Name: name, Kind: "database", Type: "database", Instance: instance,
 					Container: cname, Status: "not_deployed", Port: deploy.DBPort(p.Name, name)}
 				if info, ok := containers[cname]; ok {
@@ -139,8 +139,8 @@ func (s *Server) handleServiceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	container := r.URL.Query().Get("container")
 	// The container must belong to this project.
-	if !strings.HasPrefix(container, deploy.ServiceContainerPrefix(p.Name)) &&
-		!strings.HasPrefix(container, deploy.DBContainerName(p.Name, "")) {
+	if !strings.HasPrefix(container, "goku-svc-"+deploy.EnvSlug(p.Name)) &&
+		!strings.HasPrefix(container, "goku-db-"+deploy.EnvSlug(p.Name)) {
 		httpError(w, http.StatusUnprocessableEntity, "container does not belong to this project")
 		return
 	}

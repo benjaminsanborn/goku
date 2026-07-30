@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/projects/{ref}/merge", s.handleMergeBranch)
 	api.HandleFunc("POST /v1/projects/{ref}/sync", s.handleSync)
 	api.HandleFunc("POST /v1/projects/{ref}/deploy", s.handleDeploy)
+	api.HandleFunc("POST /v1/projects/{ref}/environments/stop", s.handleStopEnv)
 	api.HandleFunc("PUT /v1/projects/{ref}/secrets", s.handleSetSecret)
 	api.HandleFunc("GET /v1/projects/{ref}/secrets", s.handleListSecrets)
 	api.HandleFunc("DELETE /v1/projects/{ref}/secrets/{key}", s.handleDeleteSecret)

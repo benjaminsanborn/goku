@@ -18,7 +18,8 @@ import (
 // handleDeploy kicks a kamal-style container deployment of a branch.
 func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Branch string `json:"branch"`
+		Branch   string `json:"branch"`
+		Instance string `json:"instance"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid JSON body")
@@ -37,6 +38,10 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if p.Upstream != "" {
 		_ = gitrepo.FetchUpstream(s.RepoPath(org, p.Name), s.upstreamFetchURL(r.Context(), org, p.Upstream))
 	}
+	if err := s.validatePlacement(r.Context(), org, in.Instance); err != nil {
+		httpError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	d, err := s.startDeploy(r.Context(), org, p, in.Branch, s.actorFrom(r))
 	if err != nil {
 		respond(w, nil, err)
@@ -49,6 +54,42 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 // startDeploy validates a branch is deployable, records the deployment, and
 // runs the pipeline async. Shared by the API, merge auto-deploy, and the
 // GitHub webhook.
+func (s *Server) localInstanceName(ctx context.Context, org string) string {
+	if instances, err := s.Store.ListInstances(ctx, org); err == nil {
+		for _, i := range instances {
+			if i.Driver == "local" {
+				return i.Name
+			}
+		}
+	}
+	return "local"
+}
+
+// validatePlacement enforces the fleet rules for an explicit instance choice:
+// it must exist and be ready; ssh members are capacity-1 and (until the ssh
+// deploy driver lands) not yet deployable.
+func (s *Server) validatePlacement(ctx context.Context, org, instance string) error {
+	if instance == "" || instance == s.localInstanceName(ctx, org) {
+		return nil
+	}
+	instances, err := s.Store.ListInstances(ctx, org)
+	if err != nil {
+		return err
+	}
+	for _, i := range instances {
+		if i.Name == instance {
+			if i.Driver == "ssh" {
+				if running, busy := s.Store.InstanceOccupied(ctx, i.Name); busy {
+					return fmt.Errorf("instance %s is running %s — stop that environment first", i.Name, running)
+				}
+				return fmt.Errorf("instance %s is enrolled and verified, but the ssh deploy driver hasn't landed yet — deploys run on the local instance for now", i.Name)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("no instance named %q in your fleet", instance)
+}
+
 func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, branch, actor string) (*store.Deployment, error) {
 	repo := s.RepoPath(org, p.Name)
 	sha, err := gitrepo.Head(repo, branch)
@@ -95,7 +136,7 @@ func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, 
 	s.deploying[p.ID] = true
 	s.syncMu.Unlock()
 
-	d, err := s.Store.CreateDeployment(ctx, org, p, branch, sha, actor, domain)
+	d, err := s.Store.CreateDeployment(ctx, org, p, branch, sha, actor, domain, s.localInstanceName(ctx, org))
 	if err != nil {
 		s.clearDeploying(p.ID)
 		return nil, err
@@ -155,7 +196,7 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		fail(err)
 		return
 	}
-	dbEnv, err := deploy.EnsureDatabaseContainers(p.Name, pw, manifest, logf)
+	dbEnv, err := deploy.EnsureDatabaseContainers(p.Name, d.Branch, pw, manifest, logf)
 	if err != nil {
 		fail(err)
 		return
@@ -216,7 +257,7 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		usedPorts[port] = true
 		svcPorts[name] = port
 
-		container, err := deploy.Run(p.Name, name, image, port, env, svc.HostMounts, logf)
+		container, err := deploy.Run(p.Name, d.Branch, name, image, port, env, svc.HostMounts, logf)
 		if err != nil {
 			fail(err)
 			return
@@ -235,23 +276,27 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		}
 	}
 
-	// Site entries per host from manifest routes; default: api on the
-	// project subdomain when no routes are declared.
+	// Site entries per host from manifest routes. main keeps its manifest
+	// domains; branch environments live at <branch>--<project>.<domain>.
+	envHost := p.Name + "." + s.Deploy.AppDomain
+	if d.Branch != "main" {
+		envHost = deploy.HostSlug(d.Branch) + "--" + p.Name + "." + s.Deploy.AppDomain
+	}
 	sites := map[string][]deploy.SiteEntry{}
 	for _, rt := range manifest.Routes {
 		port, ok := svcPorts[rt.Service]
 		if !ok {
 			continue
 		}
-		host := rt.Domain
-		if host == "default" || host == "" {
-			host = p.Name + "." + s.Deploy.AppDomain
+		host := envHost
+		if d.Branch == "main" && rt.Domain != "default" && rt.Domain != "" {
+			host = rt.Domain
 		}
 		sites[host] = append(sites[host], deploy.SiteEntry{Service: rt.Service, Paths: rt.Paths, Port: port})
 	}
 	if len(sites) == 0 {
 		if port, ok := svcPorts["api"]; ok {
-			sites[p.Name+"."+s.Deploy.AppDomain] = []deploy.SiteEntry{{Service: "api", Port: port}}
+			sites[envHost] = []deploy.SiteEntry{{Service: "api", Port: port}}
 		}
 	}
 	routesJSON, _ := json.Marshal(sites)
@@ -259,9 +304,9 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 	// Bookkeeping and routing happen BEFORE stopping the old containers: for
 	// self-hosted goku, "the old containers" include the process running this
 	// very pipeline.
-	s.Store.SupersedePrevious(ctx, p.ID, d.ID)
-	primaryHost := p.Name + "." + s.Deploy.AppDomain
-	if d.Domain != "" {
+	s.Store.SupersedePrevious(ctx, p.ID, d.Branch, d.ID)
+	primaryHost := envHost
+	if d.Branch == "main" && d.Domain != "" {
 		primaryHost = d.Domain
 	}
 	url := "https://" + primaryHost
@@ -291,5 +336,51 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		}
 	}
 	logf("live at %s", url)
-	deploy.StopPrevious(p.Name, keep, logf)
+	deploy.StopPrevious(p.Name, d.Branch, keep, logf)
+}
+
+// handleStopEnv tears down a branch environment: containers stopped,
+// deployments marked stopped, routes regenerated. main is not stoppable —
+// deploy over it instead.
+func (s *Server) handleStopEnv(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if in.Branch == "" || in.Branch == "main" {
+		httpError(w, http.StatusUnprocessableEntity, "main is the primary environment — deploy over it instead of stopping it")
+		return
+	}
+	org := orgFrom(r.Context())
+	p, err := s.Store.GetProject(r.Context(), org, r.PathValue("ref"))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	deploy.StopEnvironment(p.Name, in.Branch, func(string, ...any) {})
+	s.Store.StopEnvironmentDeployments(r.Context(), org, p.ID, p.Name, in.Branch, s.actorFrom(r))
+	if healthy, err := s.Store.AllHealthyDeployments(r.Context()); err == nil {
+		all := map[string][]deploy.SiteEntry{}
+		for _, hr := range healthy {
+			if hr.Routes != nil {
+				var m map[string][]deploy.SiteEntry
+				if json.Unmarshal(hr.Routes, &m) == nil {
+					for host, entries := range m {
+						all[host] = entries
+					}
+					continue
+				}
+			}
+			host := hr.Project + "." + s.Deploy.AppDomain
+			if hr.Domain != "" {
+				host = hr.Domain
+			}
+			all[host] = []deploy.SiteEntry{{Service: "api", Port: hr.Port}}
+		}
+		_ = deploy.WriteRoutes(s.Deploy, all, func(string, ...any) {})
+	}
+	respond(w, map[string]any{"stopped": in.Branch}, nil)
 }

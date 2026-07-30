@@ -10,6 +10,7 @@ type Deployment = {
   sha: string
   status: string
   actor: string
+  instance: string
   url: string
   log: string
   created_at: string
@@ -104,12 +105,12 @@ export default function ProjectPage() {
           Deployments
         </h2>
         <div className="spacer" />
-        <DeployButton projectRef={ref!} branch={branch} />
+        <NewEnvButton projectRef={ref!} branches={branches?.branches ?? []} />
       </div>
       {deployments?.deployments.length === 0 ? (
-        <p className="page-sub">No deployments yet — Deploy builds this branch's Dockerfile and runs it on the goku host.</p>
+        <p className="page-sub">No environments yet — press + to tie a branch to a fleet instance and deploy it.</p>
       ) : (
-        <Environments deployments={deployments?.deployments ?? []} />
+        <Environments projectRef={ref!} deployments={deployments?.deployments ?? []} />
       )}
 
       <h2 className="section-h">Secrets</h2>
@@ -139,33 +140,107 @@ export default function ProjectPage() {
 
 // BranchPanel is the review surface for a selected branch: ahead/behind,
 // the diff against main, and the merge action.
-function DeployButton({ projectRef, branch }: { projectRef: string; branch: string }) {
-  const [busy, setBusy] = useState(false)
+// NewEnvButton opens the modal that ties a branch to a free fleet instance.
+function NewEnvButton({ projectRef, branches }: { projectRef: string; branches: Branch[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button className="btn" style={{ padding: '4px 12px' }} onClick={() => setOpen(true)} title="New environment">
+        +
+      </button>
+      {open && <NewEnvModal projectRef={projectRef} branches={branches} onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
+type FleetRow = {
+  instance: { id: string; name: string; driver: string; status: string }
+  assignments: string[]
+}
+
+function NewEnvModal({
+  projectRef,
+  branches,
+  onClose,
+}: {
+  projectRef: string
+  branches: Branch[]
+  onClose: () => void
+}) {
+  const fleet = usePoll<{ instances: FleetRow[] }>('/instances', 30000)
+  const [branchName, setBranchName] = useState(branches[0]?.name ?? 'main')
+  const [instance, setInstance] = useState('')
   const [error, setError] = useState('')
-  const deploy = async () => {
+  const [busy, setBusy] = useState(false)
+
+  const free = (row: FleetRow) =>
+    row.instance.driver === 'local' || (row.instance.status === 'ready' && row.assignments.length === 0)
+
+  const submit = async () => {
     setBusy(true)
     setError('')
     try {
-      await api(`/projects/${projectRef}/deploy`, { method: 'POST', body: JSON.stringify({ branch }) })
+      await api(`/projects/${projectRef}/deploy`, {
+        method: 'POST',
+        body: JSON.stringify({ branch: branchName, instance }),
+      })
+      onClose()
     } catch (e) {
       setError((e as Error).message)
-    } finally {
       setBusy(false)
     }
   }
+
   return (
-    <>
-      {error && <span style={{ color: 'var(--amber)', fontSize: 12 }}>{error}</span>}
-      <button className="btn" onClick={deploy} disabled={busy}>
-        {busy ? 'Starting…' : `Deploy ${branch}`}
-      </button>
-    </>
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" style={{ width: 480 }} onClick={(e) => e.stopPropagation()}>
+        <h2 className="page-title">New environment</h2>
+        <p className="page-sub">Tie a branch to a fleet instance and deploy it as its own live environment.</p>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <label className="page-sub" style={{ margin: 0, width: 70 }}>branch</label>
+          <select className="input" style={{ flex: 1 }} value={branchName} onChange={(e) => setBranchName(e.target.value)}>
+            {branches.map((b) => (
+              <option key={b.name} value={b.name}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="row" style={{ marginBottom: 4 }}>
+          <label className="page-sub" style={{ margin: 0, width: 70 }}>instance</label>
+          <select className="input" style={{ flex: 1 }} value={instance} onChange={(e) => setInstance(e.target.value)}>
+            <option value="">auto (local instance)</option>
+            {fleet?.instances.map((row) => (
+              <option key={row.instance.id} value={row.instance.name} disabled={!free(row)}>
+                {row.instance.name} · {row.instance.driver}
+                {row.instance.driver !== 'local' && row.assignments.length > 0 ? ' (busy)' : ''}
+                {row.instance.status !== 'ready' && row.instance.status !== 'verifying' ? ` (${row.instance.status})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="page-sub" style={{ fontSize: 12 }}>
+          Branch environments get their own containers and database, live at{' '}
+          <span style={{ fontFamily: 'var(--mono)' }}>&lt;branch&gt;--{projectRef}.goku.host</span>.
+        </p>
+        {error && <p style={{ color: 'var(--amber)' }}>{error}</p>}
+        <div className="row" style={{ marginTop: 12 }}>
+          <div className="spacer" />
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn" onClick={submit} disabled={busy}>
+            {busy ? 'Starting…' : 'Deploy environment'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
 // Environments groups deployments by branch: each environment shows its
 // current live deployment, and expands into that environment's history.
-function Environments({ deployments }: { deployments: Deployment[] }) {
+function Environments({ projectRef, deployments }: { projectRef: string; deployments: Deployment[] }) {
   const [open, setOpen] = useState<string | null>(null)
 
   const byBranch = new Map<string, Deployment[]>()
@@ -203,7 +278,23 @@ function Environments({ deployments }: { deployments: Deployment[] }) {
                 </>
               )}
               {!live && latest && <span className={`pill ${latest.status === 'failed' ? 'agent' : 'human'}`}>{latest.status}</span>}
+              {live?.instance && <span className="pill open">on {live.instance}</span>}
               <div className="spacer" />
+              {live && branchName !== 'main' && (
+                <button
+                  className="btn ghost"
+                  style={{ padding: '2px 10px', fontSize: 12 }}
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    await api(`/projects/${projectRef}/environments/stop`, {
+                      method: 'POST',
+                      body: JSON.stringify({ branch: branchName }),
+                    }).catch(() => {})
+                  }}
+                >
+                  stop
+                </button>
+              )}
               <span className="branch-when">
                 {history.length} deploy{history.length === 1 ? '' : 's'} · {timeAgo(latest.created_at)}
               </span>

@@ -31,6 +31,7 @@ create table if not exists deployments (
 alter table projects add column if not exists app_db_password text not null default '';
 alter table deployments add column if not exists domain text not null default '';
 alter table deployments add column if not exists routes jsonb;
+alter table deployments add column if not exists instance text not null default '';
 `
 
 type Deployment struct {
@@ -43,6 +44,7 @@ type Deployment struct {
 	Status    string    `json:"status"`
 	Actor     string    `json:"actor"`
 	Domain    string    `json:"domain"`
+	Instance  string    `json:"instance"`
 	URL       string    `json:"url"`
 	Log       string    `json:"log"`
 	Routes    []byte    `json:"-"`
@@ -50,12 +52,12 @@ type Deployment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (s *Store) CreateDeployment(ctx context.Context, orgID string, p *Project, branch, sha, actor, domain string) (*Deployment, error) {
-	d := &Deployment{ProjectID: p.ID, Branch: branch, SHA: sha, Actor: actor, Status: "building", Domain: domain}
+func (s *Store) CreateDeployment(ctx context.Context, orgID string, p *Project, branch, sha, actor, domain, instance string) (*Deployment, error) {
+	d := &Deployment{ProjectID: p.ID, Branch: branch, SHA: sha, Actor: actor, Status: "building", Domain: domain, Instance: instance}
 	err := s.pool.QueryRow(ctx, `
-		insert into deployments (project_id, branch, sha, actor, domain) values ($1, $2, $3, $4, $5)
+		insert into deployments (project_id, branch, sha, actor, domain, instance) values ($1, $2, $3, $4, $5, $6)
 		returning id, created_at, updated_at`,
-		p.ID, branch, sha, actor, domain).Scan(&d.ID, &d.CreatedAt, &d.UpdatedAt)
+		p.ID, branch, sha, actor, domain, instance).Scan(&d.ID, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +86,33 @@ func (s *Store) SetDeploymentState(ctx context.Context, id, status string, field
 	_, _ = s.pool.Exec(ctx, fmt.Sprintf(`update deployments set %s where id = $%d`, set, i), args...)
 }
 
-// SupersedePrevious marks earlier healthy deployments of a project as stopped.
-func (s *Store) SupersedePrevious(ctx context.Context, projectID, exceptID string) {
+// SupersedePrevious marks earlier live deployments of one environment
+// (project + branch) as stopped — other environments stay live.
+func (s *Store) SupersedePrevious(ctx context.Context, projectID, branch, exceptID string) {
 	_, _ = s.pool.Exec(ctx, `
 		update deployments set status = 'stopped', updated_at = now()
-		where project_id = $1 and id <> $2 and status in ('healthy', 'starting')`, projectID, exceptID)
+		where project_id = $1 and branch = $2 and id <> $3 and status in ('healthy', 'starting')`, projectID, branch, exceptID)
+}
+
+// StopEnvironmentDeployments marks an environment's live deployments stopped.
+func (s *Store) StopEnvironmentDeployments(ctx context.Context, orgID, projectID, projectName, branch, actor string) {
+	_, _ = s.pool.Exec(ctx, `
+		update deployments set status = 'stopped', updated_at = now()
+		where project_id = $1 and branch = $2 and status in ('healthy', 'starting')`, projectID, branch)
+	s.audit(ctx, orgID, actor, "env.stop", "project/"+projectName, map[string]any{"branch": branch})
+}
+
+// InstanceOccupied reports whether any live deployment is placed on the
+// named instance (capacity-1 rule for ssh fleet members).
+func (s *Store) InstanceOccupied(ctx context.Context, instance string) (string, bool) {
+	var project, branch string
+	err := s.pool.QueryRow(ctx, `
+		select p.name, d.branch from deployments d join projects p on p.id = d.project_id
+		where d.instance = $1 and d.status in ('healthy', 'starting') limit 1`, instance).Scan(&project, &branch)
+	if err != nil {
+		return "", false
+	}
+	return project + " · " + branch, true
 }
 
 func (s *Store) ListDeployments(ctx context.Context, orgID, projectRef string, limit int) ([]Deployment, error) {
@@ -100,7 +124,7 @@ func (s *Store) ListDeployments(ctx context.Context, orgID, projectRef string, l
 		limit = 30
 	}
 	rows, err := s.pool.Query(ctx, `
-		select id, project_id, branch, sha, image, port, status, actor, url, log, created_at, updated_at
+		select id, project_id, branch, sha, image, port, status, actor, instance, url, log, created_at, updated_at
 		from deployments where project_id = $1 order by created_at desc limit $2`, p.ID, limit)
 	if err != nil {
 		return nil, err
@@ -110,7 +134,7 @@ func (s *Store) ListDeployments(ctx context.Context, orgID, projectRef string, l
 	for rows.Next() {
 		var d Deployment
 		if err := rows.Scan(&d.ID, &d.ProjectID, &d.Branch, &d.SHA, &d.Image, &d.Port, &d.Status,
-			&d.Actor, &d.URL, &d.Log, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&d.Actor, &d.Instance, &d.URL, &d.Log, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

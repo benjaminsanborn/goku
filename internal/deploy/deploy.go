@@ -152,7 +152,7 @@ func DBPort(project, resource string) int {
 // EnsureDatabaseContainers materializes each database resource as a
 // long-lived postgres container with its own volume (not blue-greened —
 // data outlives deployments); returns the env contract.
-func EnsureDatabaseContainers(project, password string, m *Manifest, logf Logf) (map[string]string, error) {
+func EnsureDatabaseContainers(project, branch, password string, m *Manifest, logf Logf) (map[string]string, error) {
 	env := map[string]string{}
 	names := []string{}
 	for name, r := range m.Resources {
@@ -164,8 +164,11 @@ func EnsureDatabaseContainers(project, password string, m *Manifest, logf Logf) 
 	role := "goku_app_" + sanitize(project)
 
 	for i, name := range names {
-		cname := fmt.Sprintf("goku-db-%s-%s", sanitize(project), sanitize(name))
-		port := DBPort(project, name)
+		cname := DBContainerName(project, branch, name)
+		port := DBPort(project+"/"+branch, name)
+		if branch == "main" {
+			port = DBPort(project, name) // pre-environment seed: keep main's ports stable
+		}
 		if out, _ := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", cname).Output(); strings.TrimSpace(string(out)) != "true" {
 			_ = exec.Command("docker", "rm", "-f", cname).Run() // clear stopped remnant; the volume persists
 			logf("starting database container %s (postgres:18) on port %d", cname, port)
@@ -264,17 +267,43 @@ func BuildWebImage(repoPath, project, sha string, svc Service, logf Logf) (strin
 	return image, nil
 }
 
-// ServiceContainerPrefix is the docker name prefix for a project's service
-// containers; DBContainerName the (stable) name for a database resource.
-func ServiceContainerPrefix(project string) string { return "goku-svc-" + sanitize(project) + "-" }
+// EnvSlug names an environment (branch) inside container names.
+func EnvSlug(branch string) string { return sanitize(branch) }
 
-func DBContainerName(project, resource string) string {
-	return "goku-db-" + sanitize(project) + "-" + sanitize(resource)
+// HostSlug names an environment inside hostnames (dashes, wildcard-safe).
+func HostSlug(branch string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(branch) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// ServiceContainerPrefix is the docker name prefix for one environment's
+// service containers; DBContainerName the (stable) name for a database
+// resource. main keeps the pre-environment names so existing containers and
+// data carry over.
+func ServiceContainerPrefix(project, branch string) string {
+	if branch == "main" {
+		return "goku-svc-" + sanitize(project) + "-"
+	}
+	return "goku-svc-" + sanitize(project) + "--" + EnvSlug(branch) + "--"
+}
+
+func DBContainerName(project, branch, resource string) string {
+	if branch == "main" {
+		return "goku-db-" + sanitize(project) + "-" + sanitize(resource)
+	}
+	return "goku-db-" + sanitize(project) + "--" + EnvSlug(branch) + "--" + sanitize(resource)
 }
 
 // Run starts a service container (host networking; the app must honor PORT).
-func Run(project, service, image string, port int, env map[string]string, hostMounts []string, logf Logf) (string, error) {
-	name := fmt.Sprintf("goku-svc-%s-%s-%d", sanitize(project), sanitize(service), time.Now().Unix())
+func Run(project, branch, service, image string, port int, env map[string]string, hostMounts []string, logf Logf) (string, error) {
+	name := fmt.Sprintf("%s%s-%d", ServiceContainerPrefix(project, branch), sanitize(service), time.Now().Unix())
 	args := []string{
 		"run", "-d", "--name", name,
 		"--network", "host",
@@ -323,20 +352,49 @@ func HealthCheck(port int, path string, timeout time.Duration, logf Logf) error 
 	return fmt.Errorf("no healthy response from %s within %s", url, timeout)
 }
 
-// StopPrevious stops and removes older service containers for the project
-// (both current goku-svc-* and legacy goku-<project>-* names), keeping the
-// containers from this deployment. Database containers are never touched.
-func StopPrevious(project string, keep map[string]bool, logf Logf) {
-	for _, prefix := range []string{"goku-svc-" + sanitize(project) + "-", "goku-" + sanitize(project) + "-"} {
+// StopPrevious stops and removes this environment's older service containers,
+// keeping the ones from the current deployment. Other environments and
+// database containers are never touched. The main environment also sweeps
+// pre-environment container names (legacy).
+func StopPrevious(project, branch string, keep map[string]bool, logf Logf) {
+	prefixes := []string{ServiceContainerPrefix(project, branch)}
+	if branch == "main" {
+		prefixes = append(prefixes, "goku-"+sanitize(project)+"-")
+	}
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=goku-", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return
+	}
+	for _, name := range strings.Fields(string(out)) {
+		if keep[name] || strings.HasPrefix(name, "goku-db-") {
+			continue
+		}
+		matched := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				matched = true
+			}
+		}
+		// main must not sweep other environments (their names contain "--").
+		if branch == "main" && strings.Contains(name, "--") {
+			matched = false
+		}
+		if matched {
+			logf("stopping previous container %s", name)
+			_ = exec.Command("docker", "rm", "-f", name).Run()
+		}
+	}
+}
+
+// StopEnvironment tears down a branch environment's containers entirely.
+func StopEnvironment(project, branch string, logf Logf) {
+	for _, prefix := range []string{ServiceContainerPrefix(project, branch), "goku-db-" + sanitize(project) + "--" + EnvSlug(branch) + "--"} {
 		out, err := exec.Command("docker", "ps", "-a", "--filter", "name="+prefix, "--format", "{{.Names}}").Output()
 		if err != nil {
 			continue
 		}
 		for _, name := range strings.Fields(string(out)) {
-			if keep[name] || strings.HasPrefix(name, "goku-db-") {
-				continue
-			}
-			logf("stopping previous container %s", name)
+			logf("stopping %s", name)
 			_ = exec.Command("docker", "rm", "-f", name).Run()
 		}
 	}

@@ -73,14 +73,15 @@ func cmdMCP() error {
 	})
 
 	type deployIn struct {
-		Project string `json:"project" jsonschema:"goku project name"`
-		Branch  string `json:"branch,omitempty" jsonschema:"branch to deploy; defaults to main"`
+		Project  string `json:"project" jsonschema:"goku project name"`
+		Branch   string `json:"branch,omitempty" jsonschema:"branch to deploy; defaults to main"`
+		Instance string `json:"instance,omitempty" jsonschema:"fleet instance to run on; defaults to the local instance"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "deploy_project",
-		Description: "Deploy a goku project: builds a Docker image from the branch (its Dockerfile), provisions declared databases, runs the container on the goku host, health-checks it, and routes https://<project>.<goku domain> to it. Only deploy when the user asks. Check progress with project_status (deployment log included).",
+		Description: "Deploy a branch of a goku project as a live environment: builds from its Dockerfile, provisions its databases, runs containers, health-checks, and routes it (main at the project domain, branches at <branch>--<project>.<domain>). Branch environments run alongside main. Only deploy when the user asks. Check progress with project_status.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deployIn) (*mcp.CallToolResult, map[string]any, error) {
-		body := map[string]string{"branch": in.Branch}
+		body := map[string]string{"branch": in.Branch, "instance": in.Instance}
 		var out map[string]any
 		if err := apiCall("POST", "/v1/projects/"+in.Project+"/deploy", body, &out); err != nil {
 			return nil, nil, err
