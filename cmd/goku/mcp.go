@@ -71,6 +71,23 @@ func cmdMCP() error {
 		return nil, out, nil
 	})
 
+	type deployIn struct {
+		Project string `json:"project" jsonschema:"goku project name"`
+		Branch  string `json:"branch,omitempty" jsonschema:"branch to deploy; defaults to main"`
+	}
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "deploy_project",
+		Description: "Deploy a goku project: builds a Docker image from the branch (its Dockerfile), provisions declared databases, runs the container on the goku host, health-checks it, and routes https://<project>.<goku domain> to it. Only deploy when the user asks. Check progress with project_status (deployment log included).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deployIn) (*mcp.CallToolResult, map[string]any, error) {
+		body := map[string]string{"branch": in.Branch}
+		var out map[string]any
+		if err := apiCall("POST", "/v1/projects/"+in.Project+"/deploy", body, &out); err != nil {
+			return nil, nil, err
+		}
+		out["next"] = "The deployment runs async: poll project_status until its deployments show healthy or failed (log field explains failures)."
+		return nil, out, nil
+	})
+
 	type syncIn struct {
 		Project string `json:"project" jsonschema:"goku project name"`
 	}
@@ -188,7 +205,7 @@ func cmdMCP() error {
 		Name:        "project_status",
 		Description: "Show a goku project's status: its branches (with merged state), architecture manifest, and review URLs. A branch that has disappeared or shows merged=true was accepted into main.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, map[string]any, error) {
-		var project, branches, manifest map[string]any
+		var project, branches, manifest, deployments map[string]any
 		if err := apiCall("GET", "/v1/projects/"+in.Project, nil, &project); err != nil {
 			return nil, nil, err
 		}
@@ -198,7 +215,10 @@ func cmdMCP() error {
 		if err := apiCall("GET", "/v1/projects/"+in.Project+"/manifest", nil, &manifest); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]any{"project": project, "branches": branches["branches"], "manifest": manifest, "ui": gokuURL() + "/projects/" + in.Project}, nil
+		if err := apiCall("GET", "/v1/projects/"+in.Project+"/deployments", nil, &deployments); err != nil {
+			return nil, nil, err
+		}
+		return nil, map[string]any{"project": project, "branches": branches["branches"], "manifest": manifest, "deployments": deployments["deployments"], "ui": gokuURL() + "/projects/" + in.Project}, nil
 	})
 
 	type mergeIn struct {

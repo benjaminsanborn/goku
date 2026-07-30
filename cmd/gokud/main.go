@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/benjaminsanborn/goku/internal/deploy"
 	"github.com/benjaminsanborn/goku/internal/server"
 	"github.com/benjaminsanborn/goku/internal/store"
 )
@@ -41,6 +42,11 @@ func main() {
 
 	srv := &server.Server{
 		Store: st, Token: token, WebDist: webDist, DataDir: dataDir, BaseURL: baseURL,
+		Deploy: deploy.Target{
+			AppsCaddyFile: os.Getenv("GOKU_APPS_CADDY"),
+			AppDomain:     envOr("GOKU_APP_DOMAIN", "localhost"),
+			PGSuperDSN:    dsn,
+		},
 		OAuth: server.OAuthConfig{
 			GitHubClientID:     os.Getenv("GOKU_GITHUB_CLIENT_ID"),
 			GitHubClientSecret: os.Getenv("GOKU_GITHUB_CLIENT_SECRET"),

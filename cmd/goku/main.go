@@ -25,6 +25,7 @@ Usage:
   goku env                   print the injected environment contract
   goku run -- <cmd> [args]   run a command with the environment injected
   goku push                  push the current branch for review
+  goku deploy [branch]       build + run the branch as a container on the goku host
   goku status                show project status and branches
   goku mcp                   serve MCP over stdio for Claude (registered by login)
 
@@ -56,6 +57,8 @@ func main() {
 		err = cmdClone(os.Args[2:])
 	case "sync":
 		err = cmdSync(os.Args[2:])
+	case "deploy":
+		err = cmdDeploy(os.Args[2:])
 	case "add":
 		err = cmdAdd(os.Args[2:])
 	case "dev":

@@ -63,12 +63,28 @@ mkdir -p /opt/goku/bin /opt/goku/web /var/lib/goku /etc/goku
 chown -R "$DEPLOY_USER" /opt/goku            # deploy artifacts: writable by deployer
 chown goku:goku /var/lib/goku                # runtime state (bare repos): service-owned
 
+echo "== docker (app deploys run as containers, kamal-style) =="
+command -v docker > /dev/null || { curl -fsSL https://get.docker.com | sh; }
+usermod -aG docker goku
+usermod -aG docker "$DEPLOY_USER"
+
+echo "== caddy app routes (gokud writes per-project site blocks) =="
+touch /etc/goku/apps.caddy && chown goku:goku /etc/goku/apps.caddy
+grep -q "import /etc/goku/apps.caddy" /etc/caddy/Caddyfile || echo "import /etc/goku/apps.caddy" >> /etc/caddy/Caddyfile
+cat > /etc/sudoers.d/goku-caddy <<EOF
+goku ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
+EOF
+chmod 440 /etc/sudoers.d/goku-caddy
+systemctl restart caddy
+
 echo "== postgres role + database =="
 systemctl enable --now postgresql
 sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='goku'" | grep -q 1 \
   || sudo -u postgres createuser goku
 sudo -u postgres psql -tAc "select 1 from pg_database where datname='goku'" | grep -q 1 \
   || sudo -u postgres createdb -O goku goku
+# gokud provisions per-app databases/roles at deploy time
+sudo -u postgres psql -q -c "alter role goku createdb createrole;"
 
 echo "== config =="
 if [ ! -f /etc/goku/gokud.env ]; then
@@ -80,6 +96,8 @@ GOKU_TOKEN=$TOKEN
 GOKU_DATA=/var/lib/goku
 WEB_DIST=/opt/goku/web/dist
 GOKU_BASE_URL=http://$HOST_IP:8080
+GOKU_APPS_CADDY=/etc/goku/apps.caddy
+GOKU_APP_DOMAIN=$DOMAIN
 EOF
   chmod 640 /etc/goku/gokud.env
   chown "goku:$DEPLOY_USER" /etc/goku/gokud.env   # service reads, deployer reads

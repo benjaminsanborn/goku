@@ -5,7 +5,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
+	"time"
 )
 
 type projectResp struct {
@@ -84,6 +86,65 @@ func cmdImport(args []string) error {
 	}
 	fmt.Printf("next: goku clone %s\n", resp.Project.Name)
 	return nil
+}
+
+type deployment struct {
+	ID     string `json:"id"`
+	Branch string `json:"branch"`
+	SHA    string `json:"sha"`
+	Status string `json:"status"`
+	URL    string `json:"url"`
+	Log    string `json:"log"`
+}
+
+// cmdDeploy kicks a container deployment and follows its log to completion.
+func cmdDeploy(args []string) error {
+	project, err := projectName()
+	if err != nil {
+		return fmt.Errorf("run inside a goku workspace: %w", err)
+	}
+	branch := "main"
+	if len(args) > 0 {
+		branch = args[0]
+	}
+	var d deployment
+	if err := apiCall("POST", "/v1/projects/"+project+"/deploy", map[string]string{"branch": branch}, &d); err != nil {
+		return err
+	}
+	fmt.Printf("deploying %s @ %s (%s)\n", branch, d.SHA[:8], project)
+
+	seen := 0
+	for {
+		time.Sleep(2 * time.Second)
+		var list struct {
+			Deployments []deployment `json:"deployments"`
+		}
+		if err := apiCall("GET", "/v1/projects/"+project+"/deployments", nil, &list); err != nil {
+			return err
+		}
+		var cur *deployment
+		for i := range list.Deployments {
+			if list.Deployments[i].ID == d.ID {
+				cur = &list.Deployments[i]
+			}
+		}
+		if cur == nil {
+			continue
+		}
+		lines := strings.Split(strings.TrimRight(cur.Log, "\n"), "\n")
+		for ; seen < len(lines); seen++ {
+			if lines[seen] != "" {
+				fmt.Println("  " + lines[seen])
+			}
+		}
+		switch cur.Status {
+		case "healthy":
+			fmt.Printf("deployed: %s\n", cur.URL)
+			return nil
+		case "failed":
+			return fmt.Errorf("deployment failed")
+		}
+	}
 }
 
 func cmdSync(args []string) error {

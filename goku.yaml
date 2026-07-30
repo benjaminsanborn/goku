@@ -12,6 +12,8 @@ services:
     size: small
     port: 8080
     health_check: /
+    env:
+      GOKU_BASE_URL: https://goku.goku.host   # the staging goku deployed by goku
   web:
     type: web            # React + Vite SPA (web/), built to web/dist, served by api
     spa: true

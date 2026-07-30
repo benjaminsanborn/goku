@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/benjaminsanborn/goku/internal/deploy"
 	"github.com/benjaminsanborn/goku/internal/store"
 )
 
@@ -40,9 +41,11 @@ type Server struct {
 	DataDir string
 	BaseURL string
 	OAuth   OAuthConfig
+	Deploy  deploy.Target
 
-	syncMu   sync.Mutex
-	lastSync map[string]time.Time // project id → last upstream fetch
+	syncMu    sync.Mutex
+	lastSync  map[string]time.Time // project id → last upstream fetch
+	deploying map[string]bool      // project id → deployment in flight
 }
 
 func (s *Server) Handler() http.Handler {
@@ -56,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/projects/{ref}/branch", s.handleBranchDetail)
 	api.HandleFunc("POST /v1/projects/{ref}/merge", s.handleMergeBranch)
 	api.HandleFunc("POST /v1/projects/{ref}/sync", s.handleSync)
+	api.HandleFunc("POST /v1/projects/{ref}/deploy", s.handleDeploy)
 	api.HandleFunc("GET /v1/projects/{ref}/manifest", s.handleManifest)
 	api.HandleFunc("GET /v1/projects/{ref}/deployments", s.handleDeployments)
 	api.HandleFunc("GET /v1/events", s.listEvents)

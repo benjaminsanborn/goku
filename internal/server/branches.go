@@ -191,14 +191,9 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 	respond(w, parseManifestView(raw, branch), nil)
 }
 
-// handleDeployments is a stub until the deploy pipeline ships: the UI is
-// built against it so deployment history has a home from day one.
 func (s *Server) handleDeployments(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref")); err != nil {
-		respond(w, nil, err)
-		return
-	}
-	respond(w, map[string]any{"deployments": []any{}}, nil)
+	deployments, err := s.Store.ListDeployments(r.Context(), orgFrom(r.Context()), r.PathValue("ref"), 30)
+	respond(w, map[string]any{"deployments": deployments}, err)
 }
 
 type serviceView struct {

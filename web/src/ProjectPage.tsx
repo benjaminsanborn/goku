@@ -3,7 +3,16 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, timeAgo, usePoll, type Branch, type BranchDetail, type Project } from './api'
 import ArchDiagram, { type Manifest } from './ArchDiagram'
 
-type Deployment = { id: string; status: string }
+type Deployment = {
+  id: string
+  branch: string
+  sha: string
+  status: string
+  actor: string
+  url: string
+  log: string
+  created_at: string
+}
 
 const KIND_CLASS: Record<string, string> = {
   feature: 'open',
@@ -62,13 +71,21 @@ export default function ProjectPage() {
       </h2>
       <ArchDiagram manifest={manifest} />
 
-      <h2 className="section-h">
-        Deployments <span className="section-note">{branch}</span>
-      </h2>
+      <div className="row" style={{ marginTop: 28 }}>
+        <h2 className="section-h" style={{ margin: 0 }}>
+          Deployments
+        </h2>
+        <div className="spacer" />
+        <DeployButton projectRef={ref!} branch={branch} />
+      </div>
       {deployments?.deployments.length === 0 ? (
-        <p className="page-sub">No deployments yet — the deploy pipeline lands here when it ships.</p>
+        <p className="page-sub">No deployments yet — Deploy builds this branch's Dockerfile and runs it on the goku host.</p>
       ) : (
-        <div className="list">{/* deployment rows once the pipeline exists */}</div>
+        <div className="list">
+          {deployments?.deployments.map((d) => (
+            <DeploymentRow key={d.id} d={d} />
+          ))}
+        </div>
       )}
 
       <h2 className="section-h">Branches</h2>
@@ -95,6 +112,62 @@ export default function ProjectPage() {
 
 // BranchPanel is the review surface for a selected branch: ahead/behind,
 // the diff against main, and the merge action.
+function DeployButton({ projectRef, branch }: { projectRef: string; branch: string }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const deploy = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await api(`/projects/${projectRef}/deploy`, { method: 'POST', body: JSON.stringify({ branch }) })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      {error && <span style={{ color: 'var(--amber)', fontSize: 12 }}>{error}</span>}
+      <button className="btn" onClick={deploy} disabled={busy}>
+        {busy ? 'Starting…' : `Deploy ${branch}`}
+      </button>
+    </>
+  )
+}
+
+function DeploymentRow({ d }: { d: Deployment }) {
+  const [showLog, setShowLog] = useState(false)
+  const statusClass =
+    d.status === 'healthy' ? 'merged' : d.status === 'failed' ? 'agent' : d.status === 'stopped' ? 'human' : 'open'
+  return (
+    <div className="cs-item" style={{ cursor: 'default' }}>
+      <div className="row">
+        <span className={`pill ${statusClass}`}>{d.status}</span>
+        <span className="branch-name">{d.branch}</span>
+        <span className="branch-sha">{d.sha.slice(0, 8)}</span>
+        {d.status === 'healthy' && d.url && (
+          <a href={d.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 13 }}>
+            {d.url.replace('https://', '')}
+          </a>
+        )}
+        <div className="spacer" />
+        <span className="pill human">{d.actor}</span>
+        <button className="btn ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => setShowLog(!showLog)}>
+          {showLog ? 'hide log' : 'log'}
+        </button>
+        <span className="branch-when">{timeAgo(d.created_at)}</span>
+      </div>
+      {showLog && (
+        <div className="filebox" style={{ marginTop: 10 }}>
+          <div className="path">deploy log</div>
+          <pre>{d.log || '…'}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SyncButton({ projectRef }: { projectRef: string }) {
   const [busy, setBusy] = useState(false)
   return (
