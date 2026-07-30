@@ -4,6 +4,7 @@ import { getToken, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
 import ProjectPage from './ProjectPage'
 import ChangesetPage from './ChangesetPage'
+import OrgFooter from './OrgFooter'
 
 export default function App() {
   const [authed, setAuthed] = useState(() => getToken() !== '')
@@ -30,6 +31,7 @@ export default function App() {
             Projects
           </NavLink>
         </nav>
+        <OrgFooter />
       </aside>
       <main className="main">
         <Routes>
