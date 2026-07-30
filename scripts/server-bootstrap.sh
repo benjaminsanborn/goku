@@ -9,7 +9,30 @@ HOST_IP="$(hostname -I | awk '{print $1}')"
 
 echo "== packages =="
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql git rsync
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates git rsync
+
+echo "== postgresql 18 (pgdg repo; ubuntu 24.04 ships 16) =="
+if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsS -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -qq
+fi
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-18
+
+# If an older cluster was already on this box it will hold port 5432 and the
+# 18 cluster won't be created. Require explicit human cleanup rather than
+# dropping someone's data.
+if ! pg_lsclusters -h | awk '$1 == 18' | grep -q .; then
+  pg_createcluster 18 main --start > /dev/null
+fi
+if ! pg_lsclusters -h | awk '$1 == 18 && $3 == 5432' | grep -q .; then
+  echo "error: an existing cluster occupies port 5432:" >&2
+  pg_lsclusters >&2
+  echo "move or drop it (pg_dropcluster --stop <ver> main), then re-run." >&2
+  exit 1
+fi
 
 echo "== service user + directories =="
 id -u platform &>/dev/null || useradd --system --home /var/lib/platform --shell /usr/sbin/nologin platform
