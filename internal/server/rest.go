@@ -47,13 +47,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/projects", s.listProjects)
 	api.HandleFunc("POST /v1/projects", s.handleCreateProject)
 	api.HandleFunc("GET /v1/projects/{ref}", s.getProject)
-	api.HandleFunc("GET /v1/projects/{ref}/changesets", s.listChangesets)
 	api.HandleFunc("GET /v1/projects/{ref}/branches", s.handleBranches)
+	api.HandleFunc("GET /v1/projects/{ref}/branch", s.handleBranchDetail)
+	api.HandleFunc("POST /v1/projects/{ref}/merge", s.handleMergeBranch)
 	api.HandleFunc("GET /v1/projects/{ref}/manifest", s.handleManifest)
 	api.HandleFunc("GET /v1/projects/{ref}/deployments", s.handleDeployments)
-	api.HandleFunc("POST /v1/projects/{ref}/changesets", s.handleOpenChangeset)
-	api.HandleFunc("GET /v1/changesets/{id}", s.getChangeset)
-	api.HandleFunc("POST /v1/changesets/{id}/merge", s.handleMerge)
 	api.HandleFunc("GET /v1/events", s.listEvents)
 	api.HandleFunc("GET /v1/me", s.handleMe)
 	api.HandleFunc("POST /v1/orgs/join", s.handleJoinOrg)
@@ -68,7 +66,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/logout", s.handleLogout)
 	mux.Handle("/v1/", s.requireAuth(api))
 	mux.Handle("/git/", s.gitHandler())
-	mux.Handle("/mcp", s.requireAuth(s.mcpHandler()))
 	mux.Handle("/", s.spaHandler())
 
 	return cors(mux)
@@ -134,39 +131,9 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	respond(w, map[string]any{"project": p, "git_remote": s.gitRemoteURL(p.Name)}, nil)
 }
 
-func (s *Server) handleOpenChangeset(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Title       string       `json:"title"`
-		Description string       `json:"description"`
-		Branch      string       `json:"branch"`
-		Files       []store.File `json:"files"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	cs, err := s.openChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("ref"), in.Title, in.Description, in.Branch, s.actorFrom(r), in.Files)
-	respond(w, cs, err)
-}
-
-func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.mergeChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("id"), s.actorFrom(r))
-	respond(w, cs, err)
-}
-
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
 	respond(w, p, err)
-}
-
-func (s *Server) listChangesets(w http.ResponseWriter, r *http.Request) {
-	changesets, err := s.Store.ListChangesets(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
-	respond(w, map[string]any{"changesets": changesets}, err)
-}
-
-func (s *Server) getChangeset(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.Store.GetChangeset(r.Context(), orgFrom(r.Context()), r.PathValue("id"))
-	respond(w, cs, err)
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {

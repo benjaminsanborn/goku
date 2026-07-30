@@ -1,11 +1,10 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 )
 
@@ -42,7 +41,7 @@ func cmdNew(args []string) error {
 	writeIfMissing(".gitignore", ".goku/\n")
 	// Committed so every clone of this workspace gives Claude the goku tools.
 	writeIfMissing(".mcp.json", "{\n  \"mcpServers\": {\n    \"goku\": { \"command\": \"goku\", \"args\": [\"mcp\"] }\n  }\n}\n")
-	writeIfMissing("README.md", "# "+name+"\n\nA goku project. `goku dev` starts local cognates; push a branch and open a changeset to propose changes.\n")
+	writeIfMissing("README.md", "# "+name+"\n\nA goku project. `goku dev` starts local cognates; push a conventional branch (feature/…, bugfix/…) to propose changes.\n")
 
 	for _, gitArgs := range [][]string{
 		{"add", "-A"},
@@ -153,14 +152,9 @@ func cmdRun(args []string) error {
 	return syscall.Exec(bin, args, append(os.Environ(), lines...))
 }
 
+// cmdPush pushes the current branch for review. Branch names follow
+// conventionalbranch.org by default (feature/…, bugfix/…, hotfix/…, chore/…).
 func cmdPush(args []string) error {
-	fs := flag.NewFlagSet("push", flag.ContinueOnError)
-	title := fs.String("t", "", "changeset title (default: last commit subject)")
-	desc := fs.String("d", "", "changeset description")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
 	project, err := projectName()
 	if err != nil {
 		return err
@@ -170,30 +164,13 @@ func cmdPush(args []string) error {
 		return err
 	}
 	if branch == "main" {
-		return fmt.Errorf("main is protected — create a branch first: git checkout -b claude/my-change")
+		return fmt.Errorf("main is protected — create a branch first: git checkout -b feature/my-change")
 	}
 	if _, err := runGit("push", "--quiet", "-u", "origin", branch); err != nil {
 		return err
 	}
-	if *title == "" {
-		*title, _ = runGit("log", "-1", "--format=%s")
-	}
-
-	var cs struct {
-		ID     string `json:"id"`
-		Number int    `json:"number"`
-	}
-	err = apiCall("POST", "/v1/projects/"+project+"/changesets",
-		map[string]string{"title": *title, "description": *desc, "branch": branch}, &cs)
-	if err != nil {
-		if strings.Contains(err.Error(), "duplicate") {
-			fmt.Printf("pushed %s — its open changeset was updated\n", branch)
-			return nil
-		}
-		return err
-	}
-	fmt.Printf("changeset #%d opened: %s\n", cs.Number, *title)
-	fmt.Printf("  review: %s/projects/%s/changesets/%s\n", gokuURL(), project, cs.ID)
+	fmt.Printf("pushed %s\n", branch)
+	fmt.Printf("  review: %s/projects/%s?branch=%s\n", gokuURL(), project, url.QueryEscape(branch))
 	return nil
 }
 
@@ -211,25 +188,27 @@ func cmdStatus() error {
 		return err
 	}
 	var list struct {
-		Changesets []struct {
-			Number   int    `json:"number"`
-			Title    string `json:"title"`
-			Status   string `json:"status"`
-			Branch   string `json:"branch"`
-			OpenedBy string `json:"opened_by"`
-		} `json:"changesets"`
+		Branches []struct {
+			Name    string `json:"name"`
+			SHA     string `json:"sha"`
+			Subject string `json:"subject"`
+			Merged  bool   `json:"merged"`
+		} `json:"branches"`
 	}
-	if err := apiCall("GET", "/v1/projects/"+project+"/changesets", nil, &list); err != nil {
+	if err := apiCall("GET", "/v1/projects/"+project+"/branches", nil, &list); err != nil {
 		return err
 	}
 
 	fmt.Printf("%s — %s (%s)\n", p.Name, p.Status, p.Region)
-	if len(list.Changesets) == 0 {
-		fmt.Println("no changesets yet")
-		return nil
-	}
-	for _, cs := range list.Changesets {
-		fmt.Printf("  #%-3d %-8s %-40s %s (%s)\n", cs.Number, cs.Status, truncate(cs.Title, 40), cs.Branch, cs.OpenedBy)
+	for _, b := range list.Branches {
+		state := "open"
+		switch {
+		case b.Name == "main":
+			state = "default"
+		case b.Merged:
+			state = "merged"
+		}
+		fmt.Printf("  %-8s %-32s %s  %s\n", state, truncate(b.Name, 32), b.SHA[:8], truncate(b.Subject, 40))
 	}
 	return nil
 }

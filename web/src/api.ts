@@ -4,25 +4,28 @@ export type Project = {
   name: string
   region: string
   status: string
-  changeset_count: number
   created_at: string
 }
 
 export type FileEntry = { path: string; content: string }
 
-export type Changeset = {
-  id: string
-  project_id: string
-  number: number
-  title: string
-  description: string
-  branch: string
-  status: string
-  opened_by: string
-  head_sha: string
+export type Branch = {
+  name: string
+  sha: string
+  subject: string
+  committed_at: string
+  kind: string
+  merged: boolean
+}
+
+export type BranchDetail = {
+  name: string
+  sha: string
+  kind: string
+  merged: boolean
+  ahead: number
+  behind: number
   files: FileEntry[]
-  created_at: string
-  updated_at: string
 }
 
 export type AuditEvent = {
@@ -68,6 +71,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export function usePoll<T>(path: string, intervalMs = 3000): T | undefined {
   const [data, setData] = useState<T>()
   useEffect(() => {
+    if (!path) {
+      setData(undefined)
+      return
+    }
     let active = true
     const load = () =>
       api<T>(path)

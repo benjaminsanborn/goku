@@ -244,6 +244,36 @@ func CommitFiles(path, branch, message, actor string, files []File) (string, err
 	return Head(path, branch)
 }
 
+// IsMerged reports whether branch is fully contained in main.
+func IsMerged(path, branch string) bool {
+	head, err := Head(path, branch)
+	if err != nil {
+		return false
+	}
+	mainSHA, err := Head(path, "main")
+	if err != nil {
+		return false
+	}
+	_, err = git(path, "merge-base", "--is-ancestor", head, mainSHA)
+	return err == nil
+}
+
+// AheadBehind returns how many commits branch is ahead of and behind main.
+func AheadBehind(path, branch string) (ahead, behind int) {
+	out, err := git(path, "rev-list", "--left-right", "--count", "main..."+branch)
+	if err != nil {
+		return 0, 0
+	}
+	fmt.Sscanf(out, "%d\t%d", &behind, &ahead)
+	return ahead, behind
+}
+
+// DeleteBranch removes a branch ref (post-merge cleanup).
+func DeleteBranch(path, branch string) error {
+	_, err := git(path, "update-ref", "-d", "refs/heads/"+branch)
+	return err
+}
+
 // MergeFF fast-forwards main to branch. Returns the new main sha.
 func MergeFF(path, branch string) (string, error) {
 	head, err := Head(path, branch)

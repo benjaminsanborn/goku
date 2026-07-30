@@ -83,4 +83,3 @@ func parseGitHubRef(ref string) (owner, repo string, ok bool) {
 	}
 	return m[3], m[4], true
 }
-

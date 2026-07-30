@@ -105,17 +105,10 @@ func gitURLProject(path string) string {
 }
 
 func (s *Server) recordPush(ctx context.Context, org, project, actor string, before, after map[string]string) {
-	repo := s.RepoPath(org, project)
 	for branch, sha := range after {
 		if before[branch] == sha {
 			continue
 		}
 		s.Store.RecordGitPush(ctx, org, project, actor, branch, sha)
-		// Refresh any open changeset tracking this branch with the new head + diff.
-		files, err := gitrepo.DiffFiles(repo, branch)
-		if err != nil {
-			continue
-		}
-		s.Store.RefreshChangesetForBranch(ctx, org, project, branch, sha, storeFiles(files))
 	}
 }

@@ -1,6 +1,6 @@
 # Operating the goku control plane
 
-`gokud` is a single binary serving four surfaces on one port: the REST API (`/v1`), the git server (`/git/<project>.git`, smart HTTP), the MCP endpoint (`/mcp`), and the web UI (everything else). State lives in PostgreSQL plus bare git repos on disk.
+`gokud` is a single binary serving three surfaces on one port: the REST API (`/v1`), the git server (`/git/<project>.git`, smart HTTP), and the web UI (everything else). The MCP surface lives in the CLI (`goku mcp`, stdio) and talks to the REST API. State lives in PostgreSQL plus bare git repos on disk.
 
 ## Package layout
 
@@ -8,7 +8,7 @@
 cmd/gokud/           server entrypoint
 cmd/goku/            workspace CLI (thin client over the REST API + docker)
 internal/store/      PostgreSQL persistence + append-only audit events
-internal/server/     HTTP handlers: REST, MCP tools, git smart-HTTP, SPA serving
+internal/server/     HTTP handlers: REST, git smart-HTTP, OAuth, SPA serving
 internal/gitrepo/    bare-repo plumbing: hooks, diffs, ff-merge, commit-from-files
 web/                 React UI (Vite); built assets served by gokud
 scripts/             server bootstrap + deploy
@@ -31,11 +31,11 @@ Auth model: organizations are provisioned **by the operator, on the server host 
 ssh <host> 'sudo -n -u goku /opt/goku/bin/gokud create-org <name>'
 ```
 
-This mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table; plaintext shown once) — hand it to the user, who runs `goku login`. Every API route requires auth; all data — projects, repos on disk (`repos/<org-id>/`), changesets, audit events — is org-scoped. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator.
+This mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table; plaintext shown once) — hand it to the user, who runs `goku login`. Every API route requires auth; all data — projects, repos on disk (`repos/<org-id>/`), audit events — is org-scoped. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator.
 
 **Human sign-in (SSO)**: the UI supports GitHub and Google OAuth once configured in `/etc/goku/gokud.env` (`GOKU_GITHUB_CLIENT_ID/SECRET`, `GOKU_GOOGLE_CLIENT_ID/SECRET`; callback URLs `https://<domain>/auth/{github,google}/callback`; GitHub scope includes `repo` to power private-repo import). SSO is **login, not signup**: a new user lands on a join screen and redeems an org token once; membership recorded, and their writes audit as `user:<email>`. Sessions are 30-day HttpOnly cookies (hashed in the `sessions` table). Agents and the CLI keep using bearer tokens (`agent:*` actors).
 
-**GitHub import**: `POST /v1/projects/import` bare-clones the repo into the org's repo dir (all branches/tags preserved, `main` normalized as default + protected) and opens an "Adopt goku standard" changeset. Private repos use the importing user's GitHub OAuth token, falling back to any org member's.
+**GitHub import**: `POST /v1/projects/import` bare-clones the repo into the org's repo dir (all branches/tags preserved, `main` normalized as default + protected); no changes are made to the code. Private repos use the importing user's GitHub OAuth token, falling back to any org member's.
 
 Releases: GoReleaser runs on `v*` tags ([.github/workflows/release.yml](../.github/workflows/release.yml)) — CLI binaries for darwin/linux, `gokud` for linux, plus a Homebrew formula pushed to [benjaminsanborn/homebrew-goku](https://github.com/benjaminsanborn/homebrew-goku). Requires the `GH_TOKEN` repo secret (a PAT that can push to the tap).
 
@@ -93,6 +93,5 @@ ssh <host> 'psql "postgres://goku@/goku?host=/var/run/postgresql"'   # as a sudo
 
 Notes from the field:
 
-- The MCP endpoint disables the Go SDK's localhost/DNS-rebinding protection because Caddy proxies to loopback with a public `Host` header; the bearer-token requirement is the actual guard.
 - `GIT_PROJECT_ROOT` must be absolute — gokud resolves `GOKU_DATA` at startup.
-- Deleting a project's rows requires deleting its changesets first (FK); test cleanup is `truncate changesets, audit_events cascade; delete from projects`.
+- Branch state (open/merged, diffs) lives in git, not the DB; test cleanup is `delete from audit_events; delete from projects` plus removing the repo dir.

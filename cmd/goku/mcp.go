@@ -20,7 +20,7 @@ func cmdMCP() error {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_projects",
-		Description: "List the user's goku projects with status and changeset counts.",
+		Description: "List the user's goku projects with status.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, map[string]any, error) {
 		var out map[string]any
 		if err := apiCall("GET", "/v1/projects", nil, &out); err != nil {
@@ -47,7 +47,7 @@ func cmdMCP() error {
 		return nil, map[string]any{
 			"workspace": filepath.Join(cwd, in.Name),
 			"output":    out,
-			"next":      "Use start_change before editing; main is protected and only moves via merged changesets.",
+			"next":      "Use start_change before editing; main is protected and only moves when a branch is merged.",
 		}, nil
 	})
 
@@ -67,26 +67,36 @@ func cmdMCP() error {
 		if err := apiCall("POST", "/v1/projects/import", body, &out); err != nil {
 			return nil, nil, err
 		}
-		out["next"] = "Review the adoption changeset (or merge it if the user approves), then use start_change to adapt the app: ensure a Dockerfile, declare resources with add_resource, wire the env contract."
+		out["next"] = "If adopted=false, use start_change to add goku.yaml and a Dockerfile when the user wants to adopt goku."
 		return nil, out, nil
 	})
 
 	type startIn struct {
 		Project string `json:"project" jsonschema:"goku project name"`
+		Kind    string `json:"kind,omitempty" jsonschema:"conventional branch type: feature (default), bugfix, hotfix, chore, or release"`
 		Slug    string `json:"slug" jsonschema:"short kebab-case name for this change, e.g. fix-formatting"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "start_change",
-		Description: "Begin a change in a goku project (e.g. the user says: in my goku project X, change the formatting). Finds or clones the local workspace, updates main, and creates a work branch. Returns the workspace directory — edit files there with your normal file tools, then call propose_change to submit for review.",
+		Description: "Begin a change in a goku project (e.g. the user says: in my goku project X, change the formatting). Finds or clones the local workspace, updates main, and creates a conventional branch (conventionalbranch.org): feature/<slug> by default, or bugfix/hotfix/chore/release via kind. Returns the workspace directory — edit files there with your normal file tools, then call propose_change to push for review.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in startIn) (*mcp.CallToolResult, map[string]any, error) {
 		ws, err := workspaceFor(in.Project)
 		if err != nil {
 			return nil, nil, err
 		}
-		branch := "claude/" + slugify(in.Slug)
-		if branch == "claude/" {
+		kind := in.Kind
+		switch kind {
+		case "":
+			kind = "feature"
+		case "feature", "bugfix", "hotfix", "chore", "release":
+		default:
+			return nil, nil, fmt.Errorf("kind must be feature, bugfix, hotfix, chore, or release")
+		}
+		slug := slugify(in.Slug)
+		if slug == "" {
 			return nil, nil, fmt.Errorf("slug is required")
 		}
+		branch := kind + "/" + slug
 		if _, err := gitIn(ws, "checkout", "main"); err != nil {
 			return nil, nil, err
 		}
@@ -104,13 +114,12 @@ func cmdMCP() error {
 	})
 
 	type proposeIn struct {
-		Project     string `json:"project" jsonschema:"goku project name"`
-		Title       string `json:"title" jsonschema:"short human-readable title for the change"`
-		Description string `json:"description,omitempty" jsonschema:"what this change does and why"`
+		Project string `json:"project" jsonschema:"goku project name"`
+		Title   string `json:"title" jsonschema:"commit message subject for uncommitted work (conventional commit style encouraged)"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "propose_change",
-		Description: "Submit the current change in a goku project for human review: commits everything in the workspace, pushes the work branch, and opens a changeset in the project changelog. Nothing deploys until a human merges it.",
+		Description: "Submit the current change in a goku project for human review: commits everything in the workspace and pushes the branch. The branch appears in the project UI with its diff against main — like a GitHub branch awaiting merge. Nothing deploys until a human merges it.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in proposeIn) (*mcp.CallToolResult, map[string]any, error) {
 		ws, err := workspaceFor(in.Project)
 		if err != nil {
@@ -131,7 +140,7 @@ func cmdMCP() error {
 				return nil, nil, err
 			}
 		}
-		out, err := selfIn(ws, "push", "-t", in.Title, "-d", in.Description)
+		out, err := selfIn(ws, "push")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -145,7 +154,7 @@ func cmdMCP() error {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "add_resource",
-		Description: "Add an infrastructure resource (database or storage) to a goku project: declares it in the goku.yaml manifest and starts its local docker cognate with the environment contract (DATABASE_URL etc.) injected for local development. The manifest change rides in the next changeset.",
+		Description: "Add an infrastructure resource (database or storage) to a goku project: declares it in the goku.yaml manifest and starts its local docker cognate with the environment contract (DATABASE_URL etc.) injected for local development. The manifest change rides in the branch you push.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in resourceIn) (*mcp.CallToolResult, map[string]any, error) {
 		ws, err := workspaceFor(in.Project)
 		if err != nil {
@@ -163,45 +172,34 @@ func cmdMCP() error {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "project_status",
-		Description: "Show a goku project's status: its resources, changesets (open and merged), and review URLs. Use to check whether a proposed change has been merged.",
+		Description: "Show a goku project's status: its branches (with merged state), architecture manifest, and review URLs. A branch that has disappeared or shows merged=true was accepted into main.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, map[string]any, error) {
-		var project, changesets map[string]any
+		var project, branches, manifest map[string]any
 		if err := apiCall("GET", "/v1/projects/"+in.Project, nil, &project); err != nil {
 			return nil, nil, err
 		}
-		if err := apiCall("GET", "/v1/projects/"+in.Project+"/changesets", nil, &changesets); err != nil {
+		if err := apiCall("GET", "/v1/projects/"+in.Project+"/branches", nil, &branches); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]any{"project": project, "changesets": changesets["changesets"], "ui": gokuURL() + "/projects/" + in.Project}, nil
+		if err := apiCall("GET", "/v1/projects/"+in.Project+"/manifest", nil, &manifest); err != nil {
+			return nil, nil, err
+		}
+		return nil, map[string]any{"project": project, "branches": branches["branches"], "manifest": manifest, "ui": gokuURL() + "/projects/" + in.Project}, nil
 	})
 
 	type mergeIn struct {
 		Project string `json:"project" jsonschema:"goku project name"`
-		Number  int    `json:"number" jsonschema:"changeset number to merge"`
+		Branch  string `json:"branch" jsonschema:"branch to merge into main, e.g. feature/add-todos"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "merge_change",
-		Description: "Merge an open changeset (fast-forwards the project's main). This is the human approval action — only call it when the user has explicitly asked you to merge.",
+		Description: "Merge a branch into the project's main (fast-forward) and delete the branch. This is the human approval action — only call it when the user has explicitly asked you to merge.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in mergeIn) (*mcp.CallToolResult, map[string]any, error) {
-		var list struct {
-			Changesets []struct {
-				ID     string `json:"id"`
-				Number int    `json:"number"`
-			} `json:"changesets"`
-		}
-		if err := apiCall("GET", "/v1/projects/"+in.Project+"/changesets", nil, &list); err != nil {
+		var merged map[string]any
+		if err := apiCall("POST", "/v1/projects/"+in.Project+"/merge", map[string]string{"branch": in.Branch}, &merged); err != nil {
 			return nil, nil, err
 		}
-		for _, cs := range list.Changesets {
-			if cs.Number == in.Number {
-				var merged map[string]any
-				if err := apiCall("POST", "/v1/changesets/"+cs.ID+"/merge", nil, &merged); err != nil {
-					return nil, nil, err
-				}
-				return nil, merged, nil
-			}
-		}
-		return nil, nil, fmt.Errorf("changeset #%d not found in project %q", in.Number, in.Project)
+		return nil, merged, nil
 	})
 
 	return srv.Run(context.Background(), &mcp.StdioTransport{})

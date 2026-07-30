@@ -1,0 +1,25 @@
+# goku.yaml — goku's own manifest (dogfood).
+#
+# Describes the control plane as currently deployed on goku.host:
+# a Go API (gokud), a Node+Vite frontend built into web/dist and served
+# by the API, PostgreSQL, and TLS via Caddy + Let's Encrypt on the route.
+# When goku can deploy to AWS, this same file materializes as
+# Fargate + CloudFront + Aurora behind an ALB.
+
+services:
+  api:
+    type: api            # gokud — Go control plane (REST, git smart-HTTP, MCP, UI serving)
+    size: small
+    port: 8080
+    health_check: /
+  web:
+    type: web            # React + Vite SPA (web/), built to web/dist, served by api
+    spa: true
+
+resources:
+  db:
+    type: database       # PostgreSQL 18 today (self-hosted); Aurora PostgreSQL on AWS
+
+routes:
+  - domain: goku.host    # TLS terminated by Caddy with automatic Let's Encrypt
+    service: api

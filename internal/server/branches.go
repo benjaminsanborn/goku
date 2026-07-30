@@ -1,13 +1,35 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/benjaminsanborn/goku/internal/gitrepo"
 )
+
+// conventionalKind extracts the conventionalbranch.org prefix (feature,
+// bugfix, hotfix, release, chore) from a branch name; empty otherwise.
+func conventionalKind(name string) string {
+	prefix, _, ok := strings.Cut(name, "/")
+	if !ok {
+		return ""
+	}
+	switch prefix {
+	case "feature", "bugfix", "hotfix", "release", "chore":
+		return prefix
+	}
+	return ""
+}
+
+type branchView struct {
+	gitrepo.Branch
+	Kind   string `json:"kind"`
+	Merged bool   `json:"merged"`
+}
 
 func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
 	p, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
@@ -15,8 +37,70 @@ func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err)
 		return
 	}
-	branches, err := gitrepo.Branches(s.RepoPath(orgFrom(r.Context()), p.Name))
-	respond(w, map[string]any{"branches": branches}, err)
+	repo := s.RepoPath(orgFrom(r.Context()), p.Name)
+	branches, err := gitrepo.Branches(repo)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	views := []branchView{}
+	for _, b := range branches {
+		v := branchView{Branch: b, Kind: conventionalKind(b.Name)}
+		if b.Name != "main" {
+			v.Merged = gitrepo.IsMerged(repo, b.Name)
+		}
+		views = append(views, v)
+	}
+	respond(w, map[string]any{"branches": views}, nil)
+}
+
+// handleBranchDetail returns a branch's state relative to main: ahead/behind,
+// merged, and the file diff — the review surface for the branch-based flow.
+func (s *Server) handleBranchDetail(w http.ResponseWriter, r *http.Request) {
+	p, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		httpError(w, http.StatusUnprocessableEntity, "branch name is required")
+		return
+	}
+	repo := s.RepoPath(orgFrom(r.Context()), p.Name)
+	sha, err := gitrepo.Head(repo, name)
+	if err != nil {
+		httpError(w, http.StatusNotFound, "branch not found")
+		return
+	}
+	ahead, behind := gitrepo.AheadBehind(repo, name)
+	files, err := gitrepo.DiffFiles(repo, name)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, map[string]any{
+		"name": name, "sha": sha, "kind": conventionalKind(name),
+		"merged": name != "main" && gitrepo.IsMerged(repo, name),
+		"ahead":  ahead, "behind": behind,
+		"files": storeFiles(files),
+	}, nil)
+}
+
+func (s *Server) handleMergeBranch(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	mainSHA, err := s.mergeBranch(r.Context(), orgFrom(r.Context()), r.PathValue("ref"), in.Branch, s.actorFrom(r))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	respond(w, map[string]any{"merged": in.Branch, "main": mainSHA}, nil)
 }
 
 // handleManifest returns the parsed goku.yaml at a branch tip, normalized for

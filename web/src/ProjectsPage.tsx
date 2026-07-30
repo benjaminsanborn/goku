@@ -42,8 +42,7 @@ export default function ProjectsPage() {
                 <span className={`pill ${p.status}`}>{p.status.replaceAll('_', ' ')}</span>
               </div>
               <div className="meta">
-                {p.region} · {p.changeset_count} changeset{p.changeset_count === 1 ? '' : 's'} · created{' '}
-                {timeAgo(p.created_at)}
+                {p.region} · created {timeAgo(p.created_at)}
               </div>
             </Link>
           ))}
@@ -95,7 +94,7 @@ function ProjectModal({ kind, onClose }: { kind: 'create' | 'import'; onClose: (
         <h2 className="page-title">{isImport ? 'Import from GitHub' : 'New project'}</h2>
         <p className="page-sub">
           {isImport
-            ? 'Full history is preserved, and an "Adopt goku standard" changeset opens for review.'
+            ? 'Full history, branches, and tags are preserved; main becomes the protected default branch.'
             : 'An isolated deployment target with its own git repository and protected main.'}
         </p>
         <input

@@ -3,7 +3,6 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { api, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
 import ProjectPage from './ProjectPage'
-import ChangesetPage from './ChangesetPage'
 import OrgFooter from './OrgFooter'
 
 export type Me = {
@@ -55,7 +54,6 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/projects/:ref" element={<ProjectPage />} />
-          <Route path="/projects/:ref/changesets/:id" element={<ChangesetPage />} />
         </Routes>
       </main>
     </div>
