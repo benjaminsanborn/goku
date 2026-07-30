@@ -4,7 +4,7 @@ Compliant CI/CD into AWS, built for AI agents.
 
 goku is a control plane your agents ship through: every project gets an isolated deployment target with curated resources (database, API, load balancer, storage, web), a git repository with a protected `main`, and **branch-based review**: work lands on conventional branches (feature/…, bugfix/… — conventionalbranch.org) that humans review and merge in the UI, just like GitHub renders branches. Your Claude connects over MCP and proposes; you approve. Locally, declared resources run as **cognates** (postgres, MinIO in docker) with the same env vars they'll have in the cloud.
 
-> AWS provisioning and deployment are design-complete but not built yet ([docs/design](docs/design)) — today merging a branch advances `main` and records the manifest.
+> Deployment today is **kamal-style containers on the goku host**: `goku deploy` builds the branch's Dockerfile, provisions declared databases on the host's postgres, runs the container with the env contract, health-checks it, and routes `https://<project>.goku.host` through Caddy with automatic TLS. AWS provisioning (Fargate/Aurora per the manifest) is design-complete ([docs/design](docs/design)) and comes next.
 
 ## Get started
 
@@ -62,6 +62,14 @@ goku push
 
 The branch appears on the project page with its diff against `main` — including any `goku.yaml` changes, and the architecture diagram for that branch. Review and hit **Merge** in the UI (fast-forward + branch cleanup), or tell your Claude to merge. Direct pushes to `main` are rejected by the server.
 
+### 6. Deploy
+
+```sh
+goku deploy            # or the Deploy button in the UI, or ask your Claude
+```
+
+Builds the branch's Dockerfile into an image, provisions any `database` resources as real postgres databases (injected as `DATABASE_URL`), runs the container honoring `PORT`, health-checks the manifest's `health_check` path, then routes `https://<project>.goku.host` to it and retires the previous container. Deployment history — with live logs — is on the project page. goku itself is deployed this way: the production goku built and runs a staging goku at goku.goku.host from this very repo.
+
 ## Command reference
 
 | Command | Does |
@@ -77,6 +85,7 @@ The branch appears on the project page with its diff against `main` — includin
 | `goku env` | print the injected env contract |
 | `goku run -- <cmd>` | run anything with the env injected |
 | `goku push` | push the current branch for review |
+| `goku deploy [branch]` | build + run the branch as a container on the goku host |
 | `goku status` | project + branches from the CLI |
 
 Config: `~/.config/goku/config` (`GOKU_URL`, `GOKU_TOKEN`); env vars override.

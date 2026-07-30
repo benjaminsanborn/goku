@@ -91,6 +91,8 @@ ssh <host> sudo -n journalctl -u caddy -n 50     # cert issuance
 ssh <host> 'psql "postgres://goku@/goku?host=/var/run/postgresql"'   # as a sudoer via: sudo -u goku ...
 ```
 
+**Deployments (kamal-style)**: `internal/deploy` builds images from the bare repo (`git archive` → `docker build`), provisions `goku_app_<project>` postgres roles/dbs, runs containers with host networking + `PORT`/`DATABASE_URL`/`DATA_DIR`, and writes per-app Caddy site blocks to `/etc/goku/apps.caddy` (reloaded via Caddy's admin API — no sudo). Config: `GOKU_APPS_CADDY`, `GOKU_APP_DOMAIN`. The unit needs docker group membership, `ReadWritePaths=/etc/goku/apps.caddy`, and the goku role needs `CREATEDB CREATEROLE` (all in bootstrap).
+
 Notes from the field:
 
 - `GIT_PROJECT_ROOT` must be absolute — gokud resolves `GOKU_DATA` at startup.
