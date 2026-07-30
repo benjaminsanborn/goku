@@ -21,6 +21,7 @@ create table if not exists deployments (
 	port int not null default 0,
 	status text not null default 'building',
 	actor text not null,
+	domain text not null default '',
 	url text not null default '',
 	log text not null default '',
 	created_at timestamptz not null default now(),
@@ -28,6 +29,7 @@ create table if not exists deployments (
 );
 
 alter table projects add column if not exists app_db_password text not null default '';
+alter table deployments add column if not exists domain text not null default '';
 `
 
 type Deployment struct {
@@ -39,18 +41,19 @@ type Deployment struct {
 	Port      int       `json:"port"`
 	Status    string    `json:"status"`
 	Actor     string    `json:"actor"`
+	Domain    string    `json:"domain"`
 	URL       string    `json:"url"`
 	Log       string    `json:"log"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (s *Store) CreateDeployment(ctx context.Context, orgID string, p *Project, branch, sha, actor string) (*Deployment, error) {
-	d := &Deployment{ProjectID: p.ID, Branch: branch, SHA: sha, Actor: actor, Status: "building"}
+func (s *Store) CreateDeployment(ctx context.Context, orgID string, p *Project, branch, sha, actor, domain string) (*Deployment, error) {
+	d := &Deployment{ProjectID: p.ID, Branch: branch, SHA: sha, Actor: actor, Status: "building", Domain: domain}
 	err := s.pool.QueryRow(ctx, `
-		insert into deployments (project_id, branch, sha, actor) values ($1, $2, $3, $4)
+		insert into deployments (project_id, branch, sha, actor, domain) values ($1, $2, $3, $4, $5)
 		returning id, created_at, updated_at`,
-		p.ID, branch, sha, actor).Scan(&d.ID, &d.CreatedAt, &d.UpdatedAt)
+		p.ID, branch, sha, actor, domain).Scan(&d.ID, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -152,24 +155,29 @@ func (s *Store) AppDBPassword(ctx context.Context, projectID string) (string, er
 	return pw, err
 }
 
+type HealthyRoute struct {
+	Project string
+	Domain  string // custom domain from the manifest, or "" for the default
+	Port    int
+}
+
 // AllHealthyDeployments lists every healthy deployment across orgs — used to
 // regenerate the proxy routes file.
-func (s *Store) AllHealthyDeployments(ctx context.Context) (map[string]int, error) {
+func (s *Store) AllHealthyDeployments(ctx context.Context) ([]HealthyRoute, error) {
 	rows, err := s.pool.Query(ctx, `
-		select p.name, d.port from deployments d join projects p on p.id = d.project_id
+		select p.name, d.domain, d.port from deployments d join projects p on p.id = d.project_id
 		where d.status = 'healthy'`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	routes := map[string]int{}
+	routes := []HealthyRoute{}
 	for rows.Next() {
-		var name string
-		var port int
-		if err := rows.Scan(&name, &port); err != nil {
+		var r HealthyRoute
+		if err := rows.Scan(&r.Project, &r.Domain, &r.Port); err != nil {
 			return nil, err
 		}
-		routes[name] = port
+		routes = append(routes, r)
 	}
 	return routes, rows.Err()
 }

@@ -68,6 +68,15 @@ func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, 
 	if !gitrepo.HasFile(repo, branch, "Dockerfile") {
 		return nil, fmt.Errorf("no Dockerfile on this branch — goku builds services from a Dockerfile")
 	}
+	// Host mounts give a container the machine (docker.sock, repos, proxy
+	// config) — only the operator's own org may use them (self-hosting).
+	if len(manifest.Services["api"].HostMounts) > 0 && org != s.Store.DefaultOrgID {
+		return nil, fmt.Errorf("host_mounts is restricted to operator projects")
+	}
+	domain := ""
+	if len(manifest.Routes) > 0 && manifest.Routes[0].Domain != "default" {
+		domain = manifest.Routes[0].Domain
+	}
 
 	s.syncMu.Lock()
 	if s.deploying == nil {
@@ -80,7 +89,7 @@ func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, 
 	s.deploying[p.ID] = true
 	s.syncMu.Unlock()
 
-	d, err := s.Store.CreateDeployment(ctx, org, p, branch, sha, actor)
+	d, err := s.Store.CreateDeployment(ctx, org, p, branch, sha, actor, domain)
 	if err != nil {
 		s.clearDeploying(p.ID)
 		return nil, err
@@ -155,8 +164,12 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 			logf("injecting %d secret(s)", len(secrets))
 		}
 	}
-	port := deploy.Port(p.Name)
-	container, err := deploy.Run(p.Name, image, port, env, logf)
+	avoid := 0
+	if active, err := s.Store.ActiveDeployment(ctx, p.ID); err == nil {
+		avoid = active.Port
+	}
+	port := deploy.Port(p.Name, d.SHA, avoid)
+	container, err := deploy.Run(p.Name, image, port, env, manifest.Services["api"].HostMounts, logf)
 	if err != nil {
 		fail(err)
 		return
@@ -173,15 +186,30 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		return
 	}
 
-	deploy.StopPrevious(p.Name, container, logf)
+	// Bookkeeping and routing happen BEFORE stopping the old container: for
+	// self-hosted goku, "the old container" is the process running this very
+	// pipeline — everything must be durable before it removes itself.
 	s.Store.SupersedePrevious(ctx, p.ID, d.ID)
-	url := "https://" + p.Name + "." + s.Deploy.AppDomain
+	host := p.Name + "." + s.Deploy.AppDomain
+	if d.Domain != "" {
+		host = d.Domain
+	}
+	url := "https://" + host
 	s.Store.SetDeploymentState(ctx, d.ID, "healthy", map[string]any{"url": url})
 
-	if routes, err := s.Store.AllHealthyDeployments(ctx); err == nil {
+	if healthy, err := s.Store.AllHealthyDeployments(ctx); err == nil {
+		routes := map[string]int{}
+		for _, hr := range healthy {
+			h := hr.Project + "." + s.Deploy.AppDomain
+			if hr.Domain != "" {
+				h = hr.Domain
+			}
+			routes[h] = hr.Port
+		}
 		if err := deploy.WriteRoutes(s.Deploy, routes, logf); err != nil {
 			logf("routing warning: %v", err)
 		}
 	}
 	logf("live at %s", url)
+	deploy.StopPrevious(p.Name, container, logf)
 }

@@ -17,7 +17,11 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /gokud ./cmd/gokud
 
 FROM alpine:3.21
-RUN apk add --no-cache git ca-certificates
+# docker-cli + postgresql client + caddy make a containerized gokud a full
+# control plane: it can build/run app containers via the host docker socket,
+# provision app databases, and reload the host Caddy (admin API).
+RUN apk add --no-cache git git-daemon ca-certificates docker-cli postgresql16-client
+COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
 COPY --from=build /gokud /usr/local/bin/gokud
 COPY --from=web /src/web/dist /opt/goku/web/dist
 ENV WEB_DIST=/opt/goku/web/dist GOKU_DATA=/data

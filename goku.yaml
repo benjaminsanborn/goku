@@ -12,8 +12,13 @@ services:
     size: small
     port: 8080
     health_check: /
-    env:
-      GOKU_BASE_URL: https://goku.goku.host   # the staging goku deployed by goku
+    # Self-hosting: the deployed goku container IS the control plane, so it
+    # needs the machine. host_mounts is honored only for operator-org projects.
+    host_mounts:
+      - /var/lib/goku:/var/lib/goku            # bare repos
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/goku:/etc/goku                    # apps.caddy (rw) + env reference
+      - /etc/caddy:/etc/caddy:ro               # caddy reload needs the config
   web:
     type: web            # React + Vite SPA (web/), built to web/dist, served by api
     spa: true
