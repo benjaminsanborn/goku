@@ -34,8 +34,9 @@ type Manifest struct {
 }
 
 type Route struct {
-	Domain  string `yaml:"domain"`
-	Service string `yaml:"service"`
+	Domain  string   `yaml:"domain"`
+	Service string   `yaml:"service"`
+	Paths   []string `yaml:"paths"`
 }
 
 type Service struct {
@@ -46,6 +47,11 @@ type Service struct {
 	// HostMounts is honored only for operator-org projects (the control
 	// plane deploying itself needs docker.sock, repos, caddy config).
 	HostMounts []string `yaml:"host_mounts"`
+	// Web services: Target is the Dockerfile stage holding built assets,
+	// Dist the directory inside that stage, SPA enables index.html fallback.
+	Target string `yaml:"target"`
+	Dist   string `yaml:"dist"`
+	SPA    bool   `yaml:"spa"`
 }
 
 type Resource struct {
@@ -68,11 +74,11 @@ func ParseManifest(raw string) (*Manifest, error) {
 // never fights its predecessor for the same bind — blue-green needs both
 // alive at once. avoid is the currently-routed port, stepped over on the
 // rare hash collision.
-func Port(project, sha string, avoid int) int {
+func Port(project, service, sha string, avoid map[int]bool) int {
 	h := fnv.New32a()
-	h.Write([]byte("app/" + project + "/" + sha))
+	h.Write([]byte("app/" + project + "/" + service + "/" + sha))
 	p := 30000 + int(h.Sum32()%10000)
-	if p == avoid {
+	for avoid[p] {
 		p++
 	}
 	return p
@@ -137,9 +143,17 @@ func Build(repoPath, project, sha string, logf Logf) (string, error) {
 	return image, nil
 }
 
-// EnsureAppDatabases provisions a host-postgres role and one database per
-// manifest database resource; returns the env vars for the container.
-func EnsureAppDatabases(t Target, project, password string, m *Manifest, logf Logf) (map[string]string, error) {
+// DBPort allocates a stable port for a project's database container.
+func DBPort(project, resource string) int {
+	h := fnv.New32a()
+	h.Write([]byte("db/" + project + "/" + resource))
+	return 25000 + int(h.Sum32()%4000)
+}
+
+// EnsureDatabaseContainers materializes each database resource as a
+// long-lived postgres container with its own volume (not blue-greened —
+// data outlives deployments); returns the env contract.
+func EnsureDatabaseContainers(project, password string, m *Manifest, logf Logf) (map[string]string, error) {
 	env := map[string]string{}
 	names := []string{}
 	for name, r := range m.Resources {
@@ -148,48 +162,111 @@ func EnsureAppDatabases(t Target, project, password string, m *Manifest, logf Lo
 		}
 	}
 	sort.Strings(names)
-	if len(names) == 0 {
-		return env, nil
-	}
-
 	role := "goku_app_" + sanitize(project)
-	psql := func(query string) error {
-		cmd := exec.Command("psql", t.PGSuperDSN, "-v", "ON_ERROR_STOP=1", "-qAt", "-c", query)
-		out, err := cmd.CombinedOutput()
-		if err != nil && !strings.Contains(string(out), "already exists") {
-			return fmt.Errorf("psql: %s", strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
-	if err := psql(fmt.Sprintf(`create role %s login password '%s'`, role, password)); err != nil {
-		return nil, err
-	}
-	if err := psql(fmt.Sprintf(`alter role %s login password '%s'`, role, password)); err != nil {
-		return nil, err
-	}
-	// PG16+: creating a database owned by another role requires SET ROLE on it.
-	grant := `do $$ begin execute format('grant %I to %I with set true', '` + role + `', current_user); end $$;`
-	if err := psql(grant); err != nil {
-		return nil, err
-	}
+
 	for i, name := range names {
-		db := fmt.Sprintf("goku_app_%s_%s", sanitize(project), sanitize(name))
-		if err := psql(fmt.Sprintf(`create database %s owner %s`, db, role)); err != nil {
-			return nil, err
+		cname := fmt.Sprintf("goku-db-%s-%s", sanitize(project), sanitize(name))
+		port := DBPort(project, name)
+		if out, _ := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", cname).Output(); strings.TrimSpace(string(out)) != "true" {
+			_ = exec.Command("docker", "rm", "-f", cname).Run() // clear stopped remnant; the volume persists
+			logf("starting database container %s (postgres:18) on port %d", cname, port)
+			if _, err := run(logf, "docker", "run", "-d", "--name", cname,
+				"--restart", "unless-stopped",
+				"-p", fmt.Sprintf("127.0.0.1:%d:5432", port),
+				"-v", cname+":/var/lib/postgresql",
+				"-e", "POSTGRES_USER="+role,
+				"-e", "POSTGRES_PASSWORD="+password,
+				"-e", "POSTGRES_DB="+sanitize(name),
+				"postgres:18"); err != nil {
+				return nil, err
+			}
 		}
-		url := fmt.Sprintf("postgres://%s:%s@localhost:5432/%s?sslmode=disable", role, password, db)
+		ready := false
+		for t := 0; t < 30; t++ {
+			if err := exec.Command("docker", "exec", cname, "pg_isready", "-U", role).Run(); err == nil {
+				ready = true
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if !ready {
+			return nil, fmt.Errorf("database container %s did not become ready", cname)
+		}
+		url := fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", role, password, port, sanitize(name))
 		env["GOKU_DATABASE_"+strings.ToUpper(sanitize(name))+"_URL"] = url
 		if i == 0 {
 			env["DATABASE_URL"] = url
 		}
-		logf("database ready: %s", db)
+		logf("database ready: %s", cname)
 	}
 	return env, nil
 }
 
-// Run starts the app container (host networking; the app must honor PORT).
-func Run(project, image string, port int, env map[string]string, hostMounts []string, logf Logf) (string, error) {
-	name := fmt.Sprintf("goku-%s-%d", sanitize(project), time.Now().Unix())
+// BuildWebImage synthesizes a static-server image for a web service: export
+// the named Dockerfile stage, take its dist directory, serve it with caddy
+// (SPA fallback optional).
+func BuildWebImage(repoPath, project, sha string, svc Service, logf Logf) (string, error) {
+	if svc.Target == "" || svc.Dist == "" {
+		return "", fmt.Errorf("web service needs target (Dockerfile stage) and dist (asset path in that stage)")
+	}
+	image := fmt.Sprintf("goku-app/%s-web:%s", project, sha[:12])
+	dir, err := os.MkdirTemp("", "goku-web-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+
+	ctxDir := dir + "/ctx"
+	outDir := dir + "/out"
+	os.MkdirAll(ctxDir, 0o755)
+	archive := exec.Command("git", "--git-dir", repoPath, "archive", sha)
+	untar := exec.Command("tar", "-x", "-C", ctxDir)
+	pipe, err := archive.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	untar.Stdin = pipe
+	if err := untar.Start(); err != nil {
+		return "", err
+	}
+	if err := archive.Run(); err != nil {
+		return "", fmt.Errorf("git archive: %w", err)
+	}
+	if err := untar.Wait(); err != nil {
+		return "", fmt.Errorf("untar: %w", err)
+	}
+
+	logf("exporting web assets (stage %s)", svc.Target)
+	if _, err := run(logf, "docker", "build", "--target", svc.Target,
+		"--output", "type=local,dest="+outDir, ctxDir); err != nil {
+		return "", err
+	}
+	assets := outDir + "/" + strings.TrimPrefix(svc.Dist, "/")
+	if _, err := os.Stat(assets); err != nil {
+		return "", fmt.Errorf("dist path %s not found in stage %s", svc.Dist, svc.Target)
+	}
+
+	serveDir := dir + "/serve"
+	os.MkdirAll(serveDir, 0o755)
+	if _, err := run(logf, "cp", "-r", assets, serveDir+"/dist"); err != nil {
+		return "", err
+	}
+	caddyfile := ":{$PORT}\nroot * /srv\nencode gzip\nfile_server\n"
+	if svc.SPA {
+		caddyfile = ":{$PORT}\nroot * /srv\nencode gzip\ntry_files {path} /index.html\nfile_server\n"
+	}
+	os.WriteFile(serveDir+"/Caddyfile", []byte(caddyfile), 0o644)
+	os.WriteFile(serveDir+"/Dockerfile", []byte("FROM caddy:2-alpine\nCOPY dist /srv\nCOPY Caddyfile /etc/caddy/Caddyfile\n"), 0o644)
+	logf("building web image %s", image)
+	if _, err := run(logf, "docker", "build", "-q", "-t", image, serveDir); err != nil {
+		return "", err
+	}
+	return image, nil
+}
+
+// Run starts a service container (host networking; the app must honor PORT).
+func Run(project, service, image string, port int, env map[string]string, hostMounts []string, logf Logf) (string, error) {
+	name := fmt.Sprintf("goku-svc-%s-%s-%d", sanitize(project), sanitize(service), time.Now().Unix())
 	args := []string{
 		"run", "-d", "--name", name,
 		"--network", "host",
@@ -238,39 +315,67 @@ func HealthCheck(port int, path string, timeout time.Duration, logf Logf) error 
 	return fmt.Errorf("no healthy response from %s within %s", url, timeout)
 }
 
-// StopPrevious stops and removes older containers for the project, keeping
-// the current one.
-func StopPrevious(project, keep string, logf Logf) {
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=goku-"+sanitize(project)+"-", "--format", "{{.Names}}").Output()
-	if err != nil {
-		return
-	}
-	for _, name := range strings.Fields(string(out)) {
-		if name == keep {
+// StopPrevious stops and removes older service containers for the project
+// (both current goku-svc-* and legacy goku-<project>-* names), keeping the
+// containers from this deployment. Database containers are never touched.
+func StopPrevious(project string, keep map[string]bool, logf Logf) {
+	for _, prefix := range []string{"goku-svc-" + sanitize(project) + "-", "goku-" + sanitize(project) + "-"} {
+		out, err := exec.Command("docker", "ps", "-a", "--filter", "name="+prefix, "--format", "{{.Names}}").Output()
+		if err != nil {
 			continue
 		}
-		logf("stopping previous container %s", name)
-		_ = exec.Command("docker", "rm", "-f", name).Run()
+		for _, name := range strings.Fields(string(out)) {
+			if keep[name] || strings.HasPrefix(name, "goku-db-") {
+				continue
+			}
+			logf("stopping previous container %s", name)
+			_ = exec.Command("docker", "rm", "-f", name).Run()
+		}
 	}
 }
 
 // WriteRoutes regenerates the Caddy site blocks for all healthy apps and
 // reloads Caddy.
-// WriteRoutes regenerates the Caddy site blocks: host → port.
-func WriteRoutes(t Target, routes map[string]int, logf Logf) error {
+// SiteEntry is one routed backend on a host: path-matched or fallback.
+type SiteEntry struct {
+	Service string   `json:"service"`
+	Paths   []string `json:"paths,omitempty"`
+	Port    int      `json:"port"`
+}
+
+// WriteRoutes regenerates the Caddy site blocks: per host, path-matched
+// entries first (manifest order), then the fallback service.
+func WriteRoutes(t Target, sites map[string][]SiteEntry, logf Logf) error {
 	if t.AppsCaddyFile == "" {
 		logf("no apps caddy file configured — skipping routing")
 		return nil
 	}
 	var b strings.Builder
 	b.WriteString("# generated by gokud — one site block per healthy app deployment\n")
-	hosts := make([]string, 0, len(routes))
-	for h := range routes {
+	hosts := make([]string, 0, len(sites))
+	for h := range sites {
 		hosts = append(hosts, h)
 	}
 	sort.Strings(hosts)
 	for _, h := range hosts {
-		fmt.Fprintf(&b, "%s {\n\treverse_proxy localhost:%d\n}\n", h, routes[h])
+		entries := sites[h]
+		if len(entries) == 1 && len(entries[0].Paths) == 0 {
+			fmt.Fprintf(&b, "%s {\n\treverse_proxy localhost:%d\n}\n", h, entries[0].Port)
+			continue
+		}
+		fmt.Fprintf(&b, "%s {\n", h)
+		for i, e := range entries {
+			if len(e.Paths) > 0 {
+				fmt.Fprintf(&b, "\t@m%d path %s\n\thandle @m%d {\n\t\treverse_proxy localhost:%d\n\t}\n", i, strings.Join(e.Paths, " "), i, e.Port)
+			}
+		}
+		for _, e := range entries {
+			if len(e.Paths) == 0 {
+				fmt.Fprintf(&b, "\thandle {\n\t\treverse_proxy localhost:%d\n\t}\n", e.Port)
+				break
+			}
+		}
+		b.WriteString("}\n")
 	}
 	if err := os.WriteFile(t.AppsCaddyFile, []byte(b.String()), 0o644); err != nil {
 		return err

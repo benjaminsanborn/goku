@@ -30,6 +30,7 @@ create table if not exists deployments (
 
 alter table projects add column if not exists app_db_password text not null default '';
 alter table deployments add column if not exists domain text not null default '';
+alter table deployments add column if not exists routes jsonb;
 `
 
 type Deployment struct {
@@ -71,7 +72,7 @@ func (s *Store) SetDeploymentState(ctx context.Context, id, status string, field
 	set := `status = $1, updated_at = now()`
 	args := []any{status}
 	i := 2
-	for _, k := range []string{"image", "port", "url"} {
+	for _, k := range []string{"image", "port", "url", "routes"} {
 		if v, ok := fields[k]; ok {
 			set += fmt.Sprintf(`, %s = $%d`, k, i)
 			args = append(args, v)
@@ -159,13 +160,15 @@ type HealthyRoute struct {
 	Project string
 	Domain  string // custom domain from the manifest, or "" for the default
 	Port    int
+	Routes  []byte // per-service site entries JSON (multi-service deployments)
 }
 
 // AllHealthyDeployments lists every healthy deployment across orgs — used to
 // regenerate the proxy routes file.
 func (s *Store) AllHealthyDeployments(ctx context.Context) ([]HealthyRoute, error) {
 	rows, err := s.pool.Query(ctx, `
-		select p.name, d.domain, d.port from deployments d join projects p on p.id = d.project_id
+		select p.name, d.domain, d.port, coalesce(d.routes, 'null'::jsonb)::text
+		from deployments d join projects p on p.id = d.project_id
 		where d.status = 'healthy'`)
 	if err != nil {
 		return nil, err
@@ -174,8 +177,12 @@ func (s *Store) AllHealthyDeployments(ctx context.Context) ([]HealthyRoute, erro
 	routes := []HealthyRoute{}
 	for rows.Next() {
 		var r HealthyRoute
-		if err := rows.Scan(&r.Project, &r.Domain, &r.Port); err != nil {
+		var routesText string
+		if err := rows.Scan(&r.Project, &r.Domain, &r.Port, &routesText); err != nil {
 			return nil, err
+		}
+		if routesText != "null" {
+			r.Routes = []byte(routesText)
 		}
 		routes = append(routes, r)
 	}

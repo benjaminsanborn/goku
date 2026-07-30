@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"sort"
 	"time"
 
 	"github.com/benjaminsanborn/goku/internal/deploy"
@@ -62,16 +63,21 @@ func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, 
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := manifest.Services["api"]; !ok {
-		return nil, fmt.Errorf("goku.yaml declares no api service — nothing to deploy")
+	if len(manifest.Services) == 0 {
+		return nil, fmt.Errorf("goku.yaml declares no services — nothing to deploy")
 	}
-	if !gitrepo.HasFile(repo, branch, "Dockerfile") {
+	needsDockerfile := false
+	for _, svc := range manifest.Services {
+		if svc.Type != "web" {
+			needsDockerfile = true
+		}
+		// Host mounts give a container the machine — operator org only.
+		if len(svc.HostMounts) > 0 && org != s.Store.DefaultOrgID {
+			return nil, fmt.Errorf("host_mounts is restricted to operator projects")
+		}
+	}
+	if needsDockerfile && !gitrepo.HasFile(repo, branch, "Dockerfile") {
 		return nil, fmt.Errorf("no Dockerfile on this branch — goku builds services from a Dockerfile")
-	}
-	// Host mounts give a container the machine (docker.sock, repos, proxy
-	// config) — only the operator's own org may use them (self-hosting).
-	if len(manifest.Services["api"].HostMounts) > 0 && org != s.Store.DefaultOrgID {
-		return nil, fmt.Errorf("host_mounts is restricted to operator projects")
 	}
 	domain := ""
 	if len(manifest.Routes) > 0 && manifest.Routes[0].Domain != "default" {
@@ -98,8 +104,7 @@ func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, 
 	return d, nil
 }
 
-// autoDeployMain deploys main after a merge when the project is adopted
-// (goku.yaml + Dockerfile); silently skips otherwise.
+// autoDeployMain deploys main after a merge when the project is adopted.
 func (s *Server) autoDeployMain(org string, p *store.Project) {
 	ctx := context.Background()
 	repo := s.RepoPath(org, p.Name)
@@ -117,8 +122,11 @@ func (s *Server) clearDeploying(projectID string) {
 	s.syncMu.Unlock()
 }
 
-// runDeploy executes build → databases → run → health → route → supersede,
-// appending progress to the deployment log as it goes.
+// runDeploy materializes the manifest: one long-lived postgres container per
+// database resource, one fresh container per service (api from the
+// Dockerfile, web as a synthesized static server), health checks, path-based
+// routing, then supersede — stopping the old containers last so a control
+// plane can replace itself.
 func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, manifest *deploy.Manifest, repo string) {
 	ctx := context.Background()
 	defer s.clearDeploying(p.ID)
@@ -135,81 +143,151 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		}
 	}()
 
-	image, err := deploy.Build(repo, p.Name, d.SHA, logf)
-	if err != nil {
-		fail(err)
-		return
-	}
+	// Databases first: long-lived containers, shared across deployments.
 	pw, err := s.Store.AppDBPassword(ctx, p.ID)
 	if err != nil {
 		fail(err)
 		return
 	}
-	env, err := deploy.EnsureAppDatabases(s.Deploy, p.Name, pw, manifest, logf)
+	dbEnv, err := deploy.EnsureDatabaseContainers(p.Name, pw, manifest, logf)
 	if err != nil {
 		fail(err)
 		return
 	}
-	// Precedence: manifest env < provisioned databases < secrets.
-	for k, v := range manifest.Services["api"].Env {
-		if _, taken := env[k]; !taken {
+	secrets, _ := s.Store.SecretValues(ctx, p.ID)
+
+	// Deterministic service order: api first, then the rest alphabetically.
+	names := []string{}
+	for name := range manifest.Services {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i] == "api" {
+			return true
+		}
+		if names[j] == "api" {
+			return false
+		}
+		return names[i] < names[j]
+	})
+
+	var baseImage string
+	usedPorts := map[int]bool{}
+	svcPorts := map[string]int{}
+	keep := map[string]bool{}
+
+	for _, name := range names {
+		svc := manifest.Services[name]
+		image := ""
+		switch svc.Type {
+		case "web":
+			image, err = deploy.BuildWebImage(repo, p.Name, d.SHA, svc, logf)
+		default:
+			if baseImage == "" {
+				baseImage, err = deploy.Build(repo, p.Name, d.SHA, logf)
+			}
+			image = baseImage
+		}
+		if err != nil {
+			fail(err)
+			return
+		}
+
+		env := map[string]string{}
+		for k, v := range svc.Env {
 			env[k] = v
 		}
-	}
-	if secrets, err := s.Store.SecretValues(ctx, p.ID); err == nil {
-		for k, v := range secrets {
-			env[k] = v
+		if svc.Type != "web" {
+			// Precedence: manifest env < databases < secrets.
+			for k, v := range dbEnv {
+				env[k] = v
+			}
+			for k, v := range secrets {
+				env[k] = v
+			}
 		}
-		if len(secrets) > 0 {
-			logf("injecting %d secret(s)", len(secrets))
-		}
-	}
-	avoid := 0
-	if active, err := s.Store.ActiveDeployment(ctx, p.ID); err == nil {
-		avoid = active.Port
-	}
-	port := deploy.Port(p.Name, d.SHA, avoid)
-	container, err := deploy.Run(p.Name, image, port, env, manifest.Services["api"].HostMounts, logf)
-	if err != nil {
-		fail(err)
-		return
-	}
-	s.Store.SetDeploymentState(ctx, d.ID, "starting", map[string]any{"image": image, "port": port})
 
-	api := manifest.Services["api"]
-	if err := deploy.HealthCheck(port, api.HealthCheck, 120*time.Second, logf); err != nil {
-		if out, _ := exec.Command("docker", "logs", "--tail", "40", container).CombinedOutput(); len(out) > 0 {
-			logf("container logs:\n%s", string(out))
+		port := deploy.Port(p.Name, name, d.SHA, usedPorts)
+		usedPorts[port] = true
+		svcPorts[name] = port
+
+		container, err := deploy.Run(p.Name, name, image, port, env, svc.HostMounts, logf)
+		if err != nil {
+			fail(err)
+			return
 		}
-		_ = exec.Command("docker", "rm", "-f", container).Run()
-		fail(err)
-		return
+		keep[container] = true
+		if name == "api" {
+			s.Store.SetDeploymentState(ctx, d.ID, "starting", map[string]any{"image": image, "port": port})
+		}
+
+		if err := deploy.HealthCheck(port, svc.HealthCheck, 120*time.Second, logf); err != nil {
+			if out, _ := exec.Command("docker", "logs", "--tail", "40", container).CombinedOutput(); len(out) > 0 {
+				logf("container logs (%s):\n%s", name, string(out))
+			}
+			for c := range keep {
+				_ = exec.Command("docker", "rm", "-f", c).Run()
+			}
+			fail(err)
+			return
+		}
 	}
 
-	// Bookkeeping and routing happen BEFORE stopping the old container: for
-	// self-hosted goku, "the old container" is the process running this very
-	// pipeline — everything must be durable before it removes itself.
+	// Site entries per host from manifest routes; default: api on the
+	// project subdomain when no routes are declared.
+	sites := map[string][]deploy.SiteEntry{}
+	for _, rt := range manifest.Routes {
+		port, ok := svcPorts[rt.Service]
+		if !ok {
+			continue
+		}
+		host := rt.Domain
+		if host == "default" || host == "" {
+			host = p.Name + "." + s.Deploy.AppDomain
+		}
+		sites[host] = append(sites[host], deploy.SiteEntry{Service: rt.Service, Paths: rt.Paths, Port: port})
+	}
+	if len(sites) == 0 {
+		if port, ok := svcPorts["api"]; ok {
+			sites[p.Name+"."+s.Deploy.AppDomain] = []deploy.SiteEntry{{Service: "api", Port: port}}
+		}
+	}
+	routesJSON, _ := json.Marshal(sites)
+
+	// Bookkeeping and routing happen BEFORE stopping the old containers: for
+	// self-hosted goku, "the old containers" include the process running this
+	// very pipeline.
 	s.Store.SupersedePrevious(ctx, p.ID, d.ID)
-	host := p.Name + "." + s.Deploy.AppDomain
+	primaryHost := p.Name + "." + s.Deploy.AppDomain
 	if d.Domain != "" {
-		host = d.Domain
+		primaryHost = d.Domain
 	}
-	url := "https://" + host
-	s.Store.SetDeploymentState(ctx, d.ID, "healthy", map[string]any{"url": url})
+	url := "https://" + primaryHost
+	s.Store.SetDeploymentState(ctx, d.ID, "healthy", map[string]any{"url": url, "routes": string(routesJSON)})
 
 	if healthy, err := s.Store.AllHealthyDeployments(ctx); err == nil {
-		routes := map[string]int{}
+		all := map[string][]deploy.SiteEntry{}
 		for _, hr := range healthy {
-			h := hr.Project + "." + s.Deploy.AppDomain
-			if hr.Domain != "" {
-				h = hr.Domain
+			if hr.Routes != nil {
+				var m map[string][]deploy.SiteEntry
+				if json.Unmarshal(hr.Routes, &m) == nil {
+					for host, entries := range m {
+						all[host] = entries
+					}
+					continue
+				}
 			}
-			routes[h] = hr.Port
+			// Legacy rows: single api port on the project subdomain.
+			host := hr.Project + "." + s.Deploy.AppDomain
+			if hr.Domain != "" {
+				host = hr.Domain
+			}
+			all[host] = []deploy.SiteEntry{{Service: "api", Port: hr.Port}}
 		}
-		if err := deploy.WriteRoutes(s.Deploy, routes, logf); err != nil {
+		if err := deploy.WriteRoutes(s.Deploy, all, logf); err != nil {
 			logf("routing warning: %v", err)
 		}
 	}
 	logf("live at %s", url)
-	deploy.StopPrevious(p.Name, container, logf)
+	deploy.StopPrevious(p.Name, keep, logf)
 }
