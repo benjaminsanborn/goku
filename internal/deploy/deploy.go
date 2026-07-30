@@ -182,7 +182,7 @@ func EnsureDatabaseContainers(project, password string, m *Manifest, logf Logf) 
 		}
 		ready := false
 		for t := 0; t < 30; t++ {
-			if err := exec.Command("docker", "exec", cname, "pg_isready", "-U", role).Run(); err == nil {
+			if err := exec.Command("docker", "exec", cname, "pg_isready", "-U", role, "-d", sanitize(name)).Run(); err == nil {
 				ready = true
 				break
 			}
