@@ -20,7 +20,7 @@ FROM alpine:3.21
 # docker-cli + postgresql client + caddy make a containerized gokud a full
 # control plane: it can build/run app containers via the host docker socket,
 # provision app databases, and reload the host Caddy (admin API).
-RUN apk add --no-cache git git-daemon ca-certificates docker-cli postgresql16-client openssh-client
+RUN apk add --no-cache git git-daemon ca-certificates docker-cli docker-cli-buildx postgresql16-client openssh-client
 COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
 # Mounted repos are owned by the host user; this is a single-purpose container.
 RUN git config --system safe.directory '*'

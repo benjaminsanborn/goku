@@ -237,7 +237,7 @@ func BuildWebImage(repoPath, project, sha string, svc Service, logf Logf) (strin
 	}
 
 	logf("exporting web assets (stage %s)", svc.Target)
-	if _, err := run(logf, "docker", "build", "--target", svc.Target,
+	if _, err := run(logf, "docker", "buildx", "build", "--target", svc.Target,
 		"--output", "type=local,dest="+outDir, ctxDir); err != nil {
 		return "", err
 	}

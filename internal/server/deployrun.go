@@ -133,8 +133,14 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 	logf := func(format string, args ...any) {
 		s.Store.AppendDeployLog(ctx, d.ID, fmt.Sprintf(format, args...))
 	}
+	keep := map[string]bool{}
 	fail := func(err error) {
 		logf("FAILED: %v", err)
+		// Remove any containers this deployment already started — the
+		// previous deployment keeps serving.
+		for c := range keep {
+			_ = exec.Command("docker", "rm", "-f", c).Run()
+		}
 		s.Store.SetDeploymentState(ctx, d.ID, "failed", nil)
 	}
 	defer func() {
@@ -174,7 +180,6 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 	var baseImage string
 	usedPorts := map[int]bool{}
 	svcPorts := map[string]int{}
-	keep := map[string]bool{}
 
 	for _, name := range names {
 		svc := manifest.Services[name]
@@ -224,9 +229,6 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		if err := deploy.HealthCheck(port, svc.HealthCheck, 120*time.Second, logf); err != nil {
 			if out, _ := exec.Command("docker", "logs", "--tail", "40", container).CombinedOutput(); len(out) > 0 {
 				logf("container logs (%s):\n%s", name, string(out))
-			}
-			for c := range keep {
-				_ = exec.Command("docker", "rm", "-f", c).Run()
 			}
 			fail(err)
 			return
