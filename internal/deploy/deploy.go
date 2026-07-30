@@ -150,6 +150,11 @@ func EnsureAppDatabases(t Target, project, password string, m *Manifest, logf Lo
 	if err := psql(fmt.Sprintf(`alter role %s login password '%s'`, role, password)); err != nil {
 		return nil, err
 	}
+	// PG16+: creating a database owned by another role requires SET ROLE on it.
+	grant := `do $$ begin execute format('grant %I to %I with set true', '` + role + `', current_user); end $$;`
+	if err := psql(grant); err != nil {
+		return nil, err
+	}
 	for i, name := range names {
 		db := fmt.Sprintf("goku_app_%s_%s", sanitize(project), sanitize(name))
 		if err := psql(fmt.Sprintf(`create database %s owner %s`, db, role)); err != nil {
