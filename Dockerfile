@@ -22,6 +22,9 @@ FROM alpine:3.21
 # provision app databases, and reload the host Caddy (admin API).
 RUN apk add --no-cache git git-daemon ca-certificates docker-cli postgresql16-client
 COPY --from=caddy:2 /usr/bin/caddy /usr/local/bin/caddy
+# Mounted repos are owned by the host user; this is a single-purpose container.
+RUN git config --system safe.directory '*'
+
 COPY --from=build /gokud /usr/local/bin/gokud
 COPY --from=web /src/web/dist /opt/goku/web/dist
 ENV WEB_DIST=/opt/goku/web/dist GOKU_DATA=/data
