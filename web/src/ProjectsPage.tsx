@@ -6,25 +6,7 @@ import { ActorPill } from './App'
 export default function ProjectsPage() {
   const data = usePoll<{ projects: Project[] }>('/projects')
   const events = usePoll<{ events: AuditEvent[] }>('/events', 5000)
-  const [name, setName] = useState('')
-  const [error, setError] = useState('')
-
-  const isImport = /github\.com\//.test(name) || /^[\w.-]+\/[\w.-]+$/.test(name.trim())
-
-  const create = async () => {
-    if (!name.trim()) return
-    try {
-      if (isImport) {
-        await api('/projects/import', { method: 'POST', body: JSON.stringify({ url: name.trim() }) })
-      } else {
-        await api('/projects', { method: 'POST', body: JSON.stringify({ name }) })
-      }
-      setName('')
-      setError('')
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }
+  const [modal, setModal] = useState<'create' | 'import' | null>(null)
 
   return (
     <>
@@ -34,25 +16,21 @@ export default function ProjectsPage() {
           <p className="page-sub">Isolated deployment targets with curated AWS resources.</p>
         </div>
         <div className="spacer" />
-        <input
-          className="input"
-          style={{ width: 260 }}
-          placeholder="new-project or github.com/owner/repo"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && create()}
-        />
-        <button className="btn" onClick={create}>
-          {isImport ? 'Import' : 'Create'}
+        <button className="btn ghost" onClick={() => setModal('import')}>
+          Import
+        </button>
+        <button className="btn" onClick={() => setModal('create')}>
+          Create
         </button>
       </div>
-      {error && <p style={{ color: 'var(--amber)' }}>{error}</p>}
+
+      {modal && <ProjectModal kind={modal} onClose={() => setModal(null)} />}
 
       {data && data.projects.length === 0 ? (
         <div className="empty">
           <p>No projects yet.</p>
           <p>
-            Create one here, or ask your Claude: <code>create a project called hello-world</code>
+            Create one, import from GitHub, or ask your Claude: <code>set up a goku project called hello-world</code>
           </p>
         </div>
       ) : (
@@ -85,5 +63,61 @@ export default function ProjectsPage() {
         ))}
       </div>
     </>
+  )
+}
+
+function ProjectModal({ kind, onClose }: { kind: 'create' | 'import'; onClose: () => void }) {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const isImport = kind === 'import'
+
+  const submit = async () => {
+    if (!value.trim() || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      if (isImport) {
+        await api('/projects/import', { method: 'POST', body: JSON.stringify({ url: value.trim() }) })
+      } else {
+        await api('/projects', { method: 'POST', body: JSON.stringify({ name: value.trim() }) })
+      }
+      onClose()
+    } catch (e) {
+      setError((e as Error).message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" style={{ width: 460 }} onClick={(e) => e.stopPropagation()}>
+        <h2 className="page-title">{isImport ? 'Import from GitHub' : 'New project'}</h2>
+        <p className="page-sub">
+          {isImport
+            ? 'Full history is preserved, and an "Adopt goku standard" changeset opens for review.'
+            : 'An isolated deployment target with its own git repository and protected main.'}
+        </p>
+        <input
+          className="input"
+          style={{ width: '100%' }}
+          placeholder={isImport ? 'github.com/owner/repo' : 'my-project'}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          autoFocus
+        />
+        {error && <p style={{ color: 'var(--amber)', marginBottom: 0 }}>{error}</p>}
+        <div className="row" style={{ marginTop: 16 }}>
+          <div className="spacer" />
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn" onClick={submit} disabled={busy}>
+            {busy ? (isImport ? 'Importing…' : 'Creating…') : isImport ? 'Import' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
