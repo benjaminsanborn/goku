@@ -13,8 +13,7 @@ var version = "dev"
 const usage = `goku — compliant CI/CD for agents
 
 Usage:
-  goku signup <org-name>     create an organization + token on the control plane
-  goku login                 point this machine at an existing org (paste token)
+  goku login                 authenticate with your organization token
   goku whoami                show which org you're authenticated as
   goku new <name>            create a project, clone it, scaffold the workspace
   goku clone <name>          clone an existing project into ./<name>
@@ -26,6 +25,7 @@ Usage:
   goku push [-t title] [-d description]
                                  push the current branch and open a changeset
   goku status                show project status and changesets
+  goku mcp                   serve MCP over stdio for Claude (registered by login)
 
 Environment:
   GOKU_URL    control plane URL (default http://localhost:8080)
@@ -39,12 +39,12 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
-	case "signup":
-		err = cmdSignup(os.Args[2:])
 	case "login":
 		err = cmdLogin(os.Args[2:])
 	case "whoami":
 		err = cmdWhoami()
+	case "mcp":
+		err = cmdMCP()
 	case "version", "-v", "--version":
 		fmt.Println("goku", version)
 	case "new":

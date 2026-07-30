@@ -8,12 +8,21 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/benjaminsanborn/goku/internal/server"
 	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 func main() {
+	// Operator subcommand: create an organization + owner token directly
+	// against the database. Runs on the server host only — there is no
+	// network signup. Usage: gokud create-org <name>
+	if len(os.Args) > 2 && os.Args[1] == "create-org" {
+		createOrg(os.Args[2])
+		return
+	}
+
 	dsn := envOr("DATABASE_URL", "postgres://localhost:5432/goku_development")
 	port := envOr("PORT", "8080")
 	token := envOr("GOKU_TOKEN", "dev-token")
@@ -42,6 +51,44 @@ func main() {
 
 	if err := http.ListenAndServe(":"+port, srv.Handler()); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func createOrg(name string) {
+	loadServerEnv()
+	dsn := envOr("DATABASE_URL", "postgres://localhost:5432/goku_development")
+	st, err := store.New(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+	org, err := st.CreateOrg(context.Background(), name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	token, err := st.CreateToken(context.Background(), org.ID, "owner")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("organization %q created\n\n  token: %s\n\n", org.Name, token)
+	fmt.Println("hand this to the user — it is shown only once. they run:")
+	fmt.Printf("  goku login --token %s\n", token)
+}
+
+// loadServerEnv makes create-org work over plain ssh by reading the systemd
+// env file when DATABASE_URL isn't already set.
+func loadServerEnv() {
+	if os.Getenv("DATABASE_URL") != "" {
+		return
+	}
+	b, err := os.ReadFile("/etc/goku/gokud.env")
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && os.Getenv(k) == "" {
+			os.Setenv(k, v)
+		}
 	}
 }
 

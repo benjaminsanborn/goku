@@ -25,7 +25,13 @@ scripts/             server bootstrap + deploy
 | `WEB_DIST` | `web/dist` | built UI assets |
 | `GOKU_BASE_URL` | `http://localhost:$PORT` | public URL used in git remotes and links |
 
-Auth model: `POST /v1/signup` (open, unauthenticated) creates an organization and mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table). Every other route requires a token; all data — projects, repos on disk (`repos/<org-id>/`), changesets, audit events — is scoped to the token's org. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator. `X-Goku-Actor: operator` distinguishes the UI from agents in the audit trail; per-agent identities are designed in [docs/design/06](../docs/design/06-security-compliance.md).
+Auth model: organizations are provisioned **by the operator, on the server host only** — there is deliberately no network signup:
+
+```sh
+ssh <host> 'sudo -n -u goku /opt/goku/bin/gokud create-org <name>'
+```
+
+This mints an org-scoped `gk_*` bearer token (sha256-hashed at rest in the `tokens` table; plaintext shown once) — hand it to the user, who runs `goku login`. Every API route requires a token; all data — projects, repos on disk (`repos/<org-id>/`), changesets, audit events — is scoped to the token's org. The root `GOKU_TOKEN` from the env maps to the built-in `default` org and is meant for the operator. `X-Goku-Actor: operator` distinguishes the UI from agents in the audit trail; per-agent identities are designed in [docs/design/06](../docs/design/06-security-compliance.md).
 
 Releases: GoReleaser runs on `v*` tags ([.github/workflows/release.yml](../.github/workflows/release.yml)) — CLI binaries for darwin/linux, `gokud` for linux, plus a Homebrew formula pushed to [benjaminsanborn/homebrew-goku](https://github.com/benjaminsanborn/homebrew-goku). Requires the `GH_TOKEN` repo secret (a PAT that can push to the tap).
 

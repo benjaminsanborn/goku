@@ -40,6 +40,8 @@ func cmdNew(args []string) error {
 
 	writeIfMissing(manifestFile, scaffoldManifest())
 	writeIfMissing(".gitignore", ".goku/\n")
+	// Committed so every clone of this workspace gives Claude the goku tools.
+	writeIfMissing(".mcp.json", "{\n  \"mcpServers\": {\n    \"goku\": { \"command\": \"goku\", \"args\": [\"mcp\"] }\n  }\n}\n")
 	writeIfMissing("README.md", "# "+name+"\n\nA goku project. `goku dev` starts local cognates; push a branch and open a changeset to propose changes.\n")
 
 	for _, gitArgs := range [][]string{

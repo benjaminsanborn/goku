@@ -56,7 +56,7 @@ function TokenGate({ onSave }: { onSave: () => void }) {
           <span className="dot">◆</span> goku
         </div>
         <p className="page-sub">
-          Enter your organization token — create one with <code>goku signup &lt;org-name&gt;</code> (operators: the
+          Enter your organization token (issued by the operator; run <code>goku login</code> to configure the CLI with it — operators: the
           root token lives in ~/.goku-token on the server).
         </p>
         <div className="row">

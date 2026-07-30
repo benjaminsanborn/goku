@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -16,50 +17,19 @@ type meResp struct {
 	} `json:"organization"`
 }
 
-// cmdSignup creates an organization on the control plane; the returned token
-// is saved to ~/.config/goku/config and shown once.
-func cmdSignup(args []string) error {
-	fs := flag.NewFlagSet("signup", flag.ContinueOnError)
-	url := fs.String("url", gokuURL(), "control plane URL")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: goku signup <org-name> [--url https://goku.host]")
-	}
-	orgName := fs.Arg(0)
-
-	var resp struct {
-		Organization struct {
-			Name string `json:"name"`
-		} `json:"organization"`
-		Token string `json:"token"`
-	}
-	if err := apiCallAt(*url, "", "POST", "/v1/signup", map[string]string{"organization": orgName}, &resp); err != nil {
-		return err
-	}
-	if err := writeConfig(*url, resp.Token); err != nil {
-		return err
-	}
-	fmt.Printf("organization %q created on %s\n", resp.Organization.Name, *url)
-	fmt.Printf("\n  token: %s\n\n", resp.Token)
-	fmt.Println("saved to ~/.config/goku/config — this token is shown only once; store it somewhere safe.")
-	fmt.Println("connect your Claude:")
-	fmt.Printf("  claude mcp add --transport http goku %s/mcp --header \"Authorization: Bearer %s\"\n", *url, resp.Token)
-	return nil
-}
-
-// cmdLogin points this machine at an existing organization using its token.
+// cmdLogin points this machine at the control plane using an organization
+// token (issued by the operator). The --url flag exists for development but
+// is undocumented: the hosted control plane is the default.
 func cmdLogin(args []string) error {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	url := fs.String("url", gokuURL(), "control plane URL")
+	url := fs.String("url", gokuURL(), "control plane URL (development only)")
 	tokenFlag := fs.String("token", "", "org token (prompted if omitted)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	token := *tokenFlag
 	if token == "" {
-		fmt.Fprintf(os.Stderr, "token for %s: ", *url)
+		fmt.Fprintf(os.Stderr, "token: ")
 		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		if err != nil {
 			return err
@@ -68,13 +38,29 @@ func cmdLogin(args []string) error {
 	}
 	var me meResp
 	if err := apiCallAt(*url, token, "GET", "/v1/me", nil, &me); err != nil {
-		return fmt.Errorf("token rejected by %s: %w", *url, err)
+		return fmt.Errorf("token rejected: %w", err)
 	}
 	if err := writeConfig(*url, token); err != nil {
 		return err
 	}
-	fmt.Printf("logged in to %s as organization %q\n", *url, me.Organization.Name)
+	fmt.Printf("logged in as organization %q\n", me.Organization.Name)
+	registerClaude()
 	return nil
+}
+
+// registerClaude wires goku into Claude Code (user scope) as a stdio MCP
+// server. The token stays in goku's config — Claude only learns the command.
+func registerClaude() {
+	if _, err := exec.LookPath("claude"); err != nil {
+		fmt.Println("Claude Code not found — to connect it later, run: claude mcp add -s user goku -- goku mcp")
+		return
+	}
+	exec.Command("claude", "mcp", "remove", "-s", "user", "goku").Run()
+	if out, err := exec.Command("claude", "mcp", "add", "-s", "user", "goku", "--", "goku", "mcp").CombinedOutput(); err != nil {
+		fmt.Printf("could not register with Claude Code (%s) — run manually: claude mcp add -s user goku -- goku mcp\n", strings.TrimSpace(string(out)))
+		return
+	}
+	fmt.Println("Claude Code connected: your Claude now has the goku tools in every session.")
 }
 
 func cmdWhoami() error {
@@ -82,7 +68,7 @@ func cmdWhoami() error {
 	if err := apiCallAt(gokuURL(), gokuToken(), "GET", "/v1/me", nil, &me); err != nil {
 		return err
 	}
-	fmt.Printf("%s → organization %q (%s)\n", gokuURL(), me.Organization.Name, me.Organization.ID)
+	fmt.Printf("organization %q (%s)\n", me.Organization.Name, me.Organization.ID)
 	return nil
 }
 

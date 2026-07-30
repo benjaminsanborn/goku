@@ -18,22 +18,17 @@ brew install benjaminsanborn/goku/goku
 
 > Note: `brew install` works once this repo is public — Homebrew can't download release assets from a private repo. Until then: `gh release download v0.1.0 -p "goku_$(uname -s)_$(uname -m).tar.gz" -R benjaminsanborn/goku` and untar to your PATH, or `go build -o /usr/local/bin/goku ./cmd/goku` from a clone.
 
-### 2. Sign up
+### 2. Log in
 
 ```sh
-goku signup my-org --url https://goku.host
+goku login
 ```
 
-Creates your organization and its access token, saved to `~/.config/goku/config`. The token is shown once — store it safely. Everything you create (projects, repos, changesets, audit log) is scoped to your org. On another machine, `goku login` points it at the same org.
+Paste the organization token your operator issued you (organizations are created by the operator — see [internal/README](internal/README.md)). The token is saved to `~/.config/goku/config`, and everything you create (projects, repos, changesets, audit log) is scoped to your org.
 
-### 3. Connect your Claude
+**That's the whole Claude integration too**: `goku login` registers goku with Claude Code automatically (a stdio MCP server, `goku mcp`, that reads your saved config — your token never enters Claude's own configuration). Every goku workspace also carries a committed `.mcp.json`, so any Claude opened inside one picks up the tools on its own. Manual fallback: `claude mcp add -s user goku -- goku mcp`.
 
-```sh
-claude mcp add --transport http goku https://goku.host/mcp \
-  --header "Authorization: Bearer <your token>"
-```
-
-(the exact command, token filled in, is printed by `goku signup`)
+Your Claude then has intent-shaped tools: `setup_project` ("set up a new goku project called demo"), `start_change` / `propose_change` ("in my goku project hello-world, fix the formatting" → branch, edit, submit for review), `add_resource`, `project_status`, `list_projects`, and `merge_change` (which it may only use when you explicitly ask).
 
 Your Claude can now `list_projects`, `create_project`, `open_changeset`, `list_changesets`, and (when you ask it to) `merge_changeset` — every action attributed to `agent:claude` in the audit feed.
 
@@ -70,9 +65,9 @@ The changeset appears in the project changelog with the full diff — including 
 
 | Command | Does |
 |---|---|
-| `goku signup <org>` | create an organization + token on the control plane |
-| `goku login` | point this machine at an existing org (paste token) |
+| `goku login` | authenticate with your org token + connect Claude Code |
 | `goku whoami` | show which org you're authenticated as |
+| `goku mcp` | serve MCP over stdio for Claude (registered automatically) |
 | `goku new <name>` | create project + clone + scaffold + first push |
 | `goku clone <name>` | existing project → local workspace |
 | `goku add <database\|storage> <name>` | add resource to manifest + start its cognate |

@@ -46,7 +46,6 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /v1/me", s.handleMe)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/signup", s.handleSignup) // more specific than /v1/ → unauthenticated
 	mux.Handle("/v1/", s.requireToken(api))
 	mux.Handle("/git/", s.gitHandler())
 	mux.Handle("/mcp", s.requireToken(s.mcpHandler()))
@@ -55,28 +54,8 @@ func (s *Server) Handler() http.Handler {
 	return cors(mux)
 }
 
-// handleSignup creates an organization and its first token. Open signup: the
-// token is the only credential and is returned exactly once.
-func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Organization string `json:"organization"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	org, err := s.Store.CreateOrg(r.Context(), in.Organization)
-	if err != nil {
-		respond(w, nil, err)
-		return
-	}
-	token, err := s.Store.CreateToken(r.Context(), org.ID, "owner")
-	if err != nil {
-		respond(w, nil, err)
-		return
-	}
-	respond(w, map[string]any{"organization": org, "token": token}, nil)
-}
+// Organizations are provisioned by the operator on the server host
+// (gokud create-org); there is deliberately no network signup surface.
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	org, err := s.Store.GetOrg(r.Context(), orgFrom(r.Context()))

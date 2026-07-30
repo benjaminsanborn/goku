@@ -15,7 +15,7 @@ import (
 // Config precedence: env var, then ~/.config/goku/config (KEY=VALUE
 // lines), then dev defaults.
 func gokuURL() string {
-	return strings.TrimSuffix(configValue("GOKU_URL", "http://localhost:8080"), "/")
+	return strings.TrimSuffix(configValue("GOKU_URL", "https://goku.host"), "/")
 }
 
 func gokuToken() string {
