@@ -16,7 +16,7 @@ You need: a control plane URL (see [internal/README](internal/README.md) to run 
 brew install benjaminsanborn/goku/goku
 ```
 
-(or grab a binary from [releases](https://github.com/benjaminsanborn/goku/releases), or `go build -o /usr/local/bin/goku ./cmd/goku` from a clone)
+> Note: `brew install` works once this repo is public — Homebrew can't download release assets from a private repo. Until then: `gh release download v0.1.0 -p "goku_$(uname -s)_$(uname -m).tar.gz" -R benjaminsanborn/goku` and untar to your PATH, or `go build -o /usr/local/bin/goku ./cmd/goku` from a clone.
 
 ### 2. Sign up
 
