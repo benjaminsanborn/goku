@@ -121,5 +121,9 @@ func (s *Server) mcpHandler() http.Handler {
 		return nil, nil, fmt.Errorf("changeset #%d not found in project %q", in.Number, in.Project)
 	})
 
-	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	// Caddy proxies to loopback with the public Host header; the SDK's DNS-
+	// rebinding protection would 403 that. Safe to disable: /mcp requires a
+	// bearer token, which a rebinding attacker cannot attach.
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
 }
