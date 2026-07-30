@@ -9,14 +9,14 @@ import (
 	"strings"
 
 	"github.com/benjaminsanborn/goku/internal/gitrepo"
-	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 var githubRepoRe = regexp.MustCompile(`^(?:https?://)?github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$|^([\w.-]+)/([\w.-]+)$`)
 
-// handleImport creates a goku project from an existing GitHub repository:
-// full history becomes the project repo, and an "Adopt goku standard"
-// changeset proposes the goku scaffolding for human review.
+// handleImport creates a goku project from an existing GitHub repository.
+// The import is faithful: full history, branches, and tags, with main
+// normalized as the protected default. Adopting the goku standard (adding
+// goku.yaml etc.) happens afterwards through ordinary changesets.
 func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		URL  string `json:"url"`
@@ -65,19 +65,11 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cs, err := s.openChangeset(r.Context(), org, p.ID,
-		"Adopt goku standard",
-		adoptionDescription(repoPath),
-		"goku/adopt", actor, adoptionFiles(repoPath, p.Name))
-	if err != nil {
-		respond(w, nil, err)
-		return
-	}
 	respond(w, map[string]any{
 		"project":    p,
-		"changeset":  cs,
 		"git_remote": s.gitRemoteURL(p.Name),
 		"imported":   fmt.Sprintf("github.com/%s/%s", owner, repo),
+		"adopted":    gitrepo.HasFile(repoPath, "main", "goku.yaml"),
 	}, nil)
 }
 
@@ -92,33 +84,3 @@ func parseGitHubRef(ref string) (owner, repo string, ok bool) {
 	return m[3], m[4], true
 }
 
-func adoptionFiles(repoPath, project string) []store.File {
-	manifest := "# goku.yaml — declares what this project needs.\n" +
-		"# Goku materializes these as AWS resources on merge; locally,\n" +
-		"# 'goku dev' runs cognates (postgres, minio) with the same env contract.\n\nservices:\n"
-	if gitrepo.HasFile(repoPath, "main", "Dockerfile") {
-		manifest += "  api:\n    type: api            # built from the existing Dockerfile\n    size: small\n    port: 8080           # adjust to the port this app listens on\n    health_check: /\n"
-	} else {
-		manifest += "  # api:                 # add once a Dockerfile exists (see changeset notes)\n  #   type: api\n  #   size: small\n  #   port: 8080\n  #   health_check: /\n"
-	}
-	manifest += "\nresources: {}\n  # 'goku add database main' / 'goku add storage assets'\n\nroutes:\n  - domain: default\n    service: api\n"
-
-	return []store.File{
-		{Path: "goku.yaml", Content: manifest},
-		{Path: ".mcp.json", Content: "{\n  \"mcpServers\": {\n    \"goku\": { \"command\": \"goku\", \"args\": [\"mcp\"] }\n  }\n}\n"},
-	}
-}
-
-func adoptionDescription(repoPath string) string {
-	d := "Imported from GitHub with full history. This changeset adds the goku scaffolding:\n" +
-		"- goku.yaml — the resource manifest (single source of truth for infra)\n" +
-		"- .mcp.json — gives any Claude opened in this workspace the goku tools\n\nTo finish adoption:\n"
-	if gitrepo.HasFile(repoPath, "main", "Dockerfile") {
-		d += "- Verify the existing Dockerfile builds and the port in goku.yaml matches the app\n"
-	} else {
-		d += "- Add a Dockerfile (goku builds services from it) and uncomment the api service in goku.yaml\n"
-	}
-	d += "- Declare resources the app needs (goku add database main, goku add storage assets)\n" +
-		"- Wire the app to the env contract (DATABASE_URL, STORAGE_ENDPOINT, …)"
-	return d
-}

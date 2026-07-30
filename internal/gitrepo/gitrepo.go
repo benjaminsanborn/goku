@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // emptyTree is git's well-known empty tree object, used as the diff base for
@@ -104,6 +105,42 @@ func CloneBareFrom(url, path string) error {
 func HasFile(path, branch, file string) bool {
 	_, err := git(path, "cat-file", "-e", branch+":"+file)
 	return err == nil
+}
+
+// FileAt returns a file's content at the tip of a branch.
+func FileAt(path, branch, file string) (string, error) {
+	return git(path, "show", branch+":"+file)
+}
+
+type Branch struct {
+	Name        string    `json:"name"`
+	SHA         string    `json:"sha"`
+	Subject     string    `json:"subject"`
+	CommittedAt time.Time `json:"committed_at"`
+}
+
+// Branches lists heads, main first, then most recently committed.
+func Branches(path string) ([]Branch, error) {
+	out, err := git(path, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname:short)%00%(objectname)%00%(committerdate:iso8601-strict)%00%(subject)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	branches := []Branch{}
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(line, "\x00", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		t, _ := time.Parse(time.RFC3339, parts[2])
+		b := Branch{Name: parts[0], SHA: parts[1], CommittedAt: t, Subject: parts[3]}
+		if b.Name == "main" {
+			branches = append([]Branch{b}, branches...)
+		} else {
+			branches = append(branches, b)
+		}
+	}
+	return branches, nil
 }
 
 // Refs returns branch name → sha for all heads.

@@ -72,18 +72,17 @@ func cmdImport(args []string) error {
 		Project struct {
 			Name string `json:"name"`
 		} `json:"project"`
-		Changeset struct {
-			ID     string `json:"id"`
-			Number int    `json:"number"`
-		} `json:"changeset"`
 		Imported string `json:"imported"`
+		Adopted  bool   `json:"adopted"`
 	}
 	if err := apiCall("POST", "/v1/projects/import", body, &resp); err != nil {
 		return err
 	}
 	fmt.Printf("imported %s → project %s (full history preserved)\n", resp.Imported, resp.Project.Name)
-	fmt.Printf("changeset #%d \"Adopt goku standard\" is open for review:\n", resp.Changeset.Number)
-	fmt.Printf("  %s/projects/%s/changesets/%s\n", gokuURL(), resp.Project.Name, resp.Changeset.ID)
+	fmt.Printf("  %s/projects/%s\n", gokuURL(), resp.Project.Name)
+	if !resp.Adopted {
+		fmt.Println("no goku.yaml yet — adopt via a changeset when ready (goku clone, add goku.yaml, goku push)")
+	}
 	fmt.Printf("next: goku clone %s\n", resp.Project.Name)
 	return nil
 }

@@ -57,7 +57,7 @@ func cmdMCP() error {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "import_project",
-		Description: "Import an existing GitHub repository as a goku project: full git history is preserved and a changeset titled 'Adopt goku standard' is opened proposing the goku scaffolding (goku.yaml manifest, .mcp.json). Use when the user asks to bring an existing repo into goku. Afterwards, use start_change to continue adapting the code (Dockerfile, env contract) through normal changesets.",
+		Description: "Import an existing GitHub repository as a goku project: full git history, branches, and tags are preserved and main becomes the protected default branch. No changes are made to the code. Use when the user asks to bring an existing repo into goku. If the result has adopted=false there is no goku.yaml yet — when the user wants to adopt goku, use start_change to add goku.yaml (+ .mcp.json, Dockerfile if missing) through a normal changeset.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in importIn) (*mcp.CallToolResult, map[string]any, error) {
 		body := map[string]string{"url": in.URL}
 		if in.Name != "" {
