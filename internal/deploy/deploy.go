@@ -404,9 +404,10 @@ func StopEnvironment(project, branch string, logf Logf) {
 // reloads Caddy.
 // SiteEntry is one routed backend on a host: path-matched or fallback.
 type SiteEntry struct {
-	Service string   `json:"service"`
-	Paths   []string `json:"paths,omitempty"`
-	Port    int      `json:"port"`
+	Service  string   `json:"service"`
+	Paths    []string `json:"paths,omitempty"`
+	Port     int      `json:"port"`
+	Upstream string   `json:"upstream,omitempty"` // instance host; empty = localhost
 }
 
 // WriteRoutes regenerates the Caddy site blocks: per host, path-matched

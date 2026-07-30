@@ -115,6 +115,25 @@ func (s *Store) GetInstance(ctx context.Context, orgID, id string) (*Instance, e
 	return i, nil
 }
 
+// GetInstanceByName includes the SSH key — server-side use only.
+func (s *Store) GetInstanceByName(ctx context.Context, orgID, name string) (*Instance, error) {
+	i := &Instance{}
+	var facts []byte
+	err := s.pool.QueryRow(ctx, `
+		select id, org_id, name, driver, address, ssh_key, status, facts, check_log, created_at, last_checked_at
+		from instances where org_id = $1 and name = $2`, orgID, name).
+		Scan(&i.ID, &i.OrgID, &i.Name, &i.Driver, &i.Address, &i.SSHKey, &i.Status, &facts,
+			&i.CheckLog, &i.CreatedAt, &i.LastCheckedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("instance: %w", ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal(facts, &i.Facts)
+	return i, nil
+}
+
 func (s *Store) DeleteInstance(ctx context.Context, orgID, id, actor string) error {
 	var name, driver string
 	err := s.pool.QueryRow(ctx, `delete from instances where org_id = $1 and id::text = $2 returning name, driver`, orgID, id).Scan(&name, &driver)

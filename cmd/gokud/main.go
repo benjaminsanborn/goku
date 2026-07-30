@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/benjaminsanborn/goku/internal/backup"
 	"github.com/benjaminsanborn/goku/internal/deploy"
 	"github.com/benjaminsanborn/goku/internal/server"
 	"github.com/benjaminsanborn/goku/internal/store"
@@ -21,6 +23,12 @@ func main() {
 	// network signup. Usage: gokud create-org <name>
 	if len(os.Args) > 2 && os.Args[1] == "create-org" {
 		createOrg(os.Args[2])
+		return
+	}
+	// Operator subcommand: run a backup now. Usage: gokud backup
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		loadServerEnv()
+		runBackupNow()
 		return
 	}
 
@@ -55,6 +63,21 @@ func main() {
 			GoogleClientSecret: os.Getenv("GOKU_GOOGLE_CLIENT_SECRET"),
 		},
 	}
+
+	// Nightly encrypted backups (db containers + repos), off-box when
+	// configured; the loop re-checks hourly and runs when >20h stale.
+	go func() {
+		for {
+			if backup.Stale(dataDir, 20*time.Hour) {
+				if summary, err := backupRun(st, dataDir); err != nil {
+					log.Printf("backup failed: %v", err)
+				} else {
+					log.Printf("%s", summary)
+				}
+			}
+			time.Sleep(time.Hour)
+		}
+	}()
 
 	// Register this host as an ordinary fleet member of the operator's org.
 	if host, err := os.Hostname(); err == nil {
@@ -112,6 +135,30 @@ func loadServerEnv() {
 			os.Setenv(k, v)
 		}
 	}
+}
+
+func backupRun(st *store.Store, dataDir string) (string, error) {
+	return backup.Run(backup.Config{
+		DataDir: dataDir,
+		KeyFile: envOr("GOKU_BACKUP_KEY", "/etc/goku/backup.key"),
+		Repo:    os.Getenv("GOKU_BACKUP_REPO"),
+		Token:   st.GitHubTokenForOrg(context.Background(), st.DefaultOrgID),
+	})
+}
+
+func runBackupNow() {
+	dsn := envOr("DATABASE_URL", "postgres://localhost:5432/goku_development")
+	dataDir, _ := filepath.Abs(envOr("GOKU_DATA", "data"))
+	st, err := store.New(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+	summary, err := backupRun(st, dataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(summary)
 }
 
 func envOr(key, fallback string) string {
