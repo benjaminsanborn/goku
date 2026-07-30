@@ -73,6 +73,8 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err)
 		return
 	}
+	// Push-to-deploy for linked repos: register the GitHub webhook now.
+	s.ensureGitHubWebhook(r.Context(), ghToken, p.Upstream)
 
 	respond(w, map[string]any{
 		"project":    p,

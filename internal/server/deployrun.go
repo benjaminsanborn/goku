@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"time"
@@ -31,30 +32,41 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err)
 		return
 	}
-	repo := s.RepoPath(org, p.Name)
-
 	// Linked projects deploy what GitHub has: sync first.
 	if p.Upstream != "" {
-		_ = gitrepo.FetchUpstream(repo, s.upstreamFetchURL(r.Context(), org, p.Upstream))
+		_ = gitrepo.FetchUpstream(s.RepoPath(org, p.Name), s.upstreamFetchURL(r.Context(), org, p.Upstream))
 	}
-	sha, err := gitrepo.Head(repo, in.Branch)
+	d, err := s.startDeploy(r.Context(), org, p, in.Branch, s.actorFrom(r))
 	if err != nil {
-		httpError(w, http.StatusNotFound, "branch not found")
+		respond(w, nil, err)
 		return
 	}
-	raw, err := gitrepo.FileAt(repo, in.Branch, "goku.yaml")
+	w.WriteHeader(http.StatusAccepted)
+	respond(w, d, nil)
+}
+
+// startDeploy validates a branch is deployable, records the deployment, and
+// runs the pipeline async. Shared by the API, merge auto-deploy, and the
+// GitHub webhook.
+func (s *Server) startDeploy(ctx context.Context, org string, p *store.Project, branch, actor string) (*store.Deployment, error) {
+	repo := s.RepoPath(org, p.Name)
+	sha, err := gitrepo.Head(repo, branch)
 	if err != nil {
-		httpError(w, http.StatusUnprocessableEntity, "no goku.yaml on this branch — adopt goku before deploying")
-		return
+		return nil, fmt.Errorf("branch %q not found", branch)
+	}
+	raw, err := gitrepo.FileAt(repo, branch, "goku.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("no goku.yaml on this branch — adopt goku before deploying")
 	}
 	manifest, err := deploy.ParseManifest(raw)
 	if err != nil {
-		httpError(w, http.StatusUnprocessableEntity, err.Error())
-		return
+		return nil, err
 	}
 	if _, ok := manifest.Services["api"]; !ok {
-		httpError(w, http.StatusUnprocessableEntity, "goku.yaml declares no api service — nothing to deploy")
-		return
+		return nil, fmt.Errorf("goku.yaml declares no api service — nothing to deploy")
+	}
+	if !gitrepo.HasFile(repo, branch, "Dockerfile") {
+		return nil, fmt.Errorf("no Dockerfile on this branch — goku builds services from a Dockerfile")
 	}
 
 	s.syncMu.Lock()
@@ -63,21 +75,31 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deploying[p.ID] {
 		s.syncMu.Unlock()
-		httpError(w, http.StatusConflict, "a deployment is already in progress for this project")
-		return
+		return nil, fmt.Errorf("a deployment is already in progress for this project")
 	}
 	s.deploying[p.ID] = true
 	s.syncMu.Unlock()
 
-	d, err := s.Store.CreateDeployment(r.Context(), org, p, in.Branch, sha, s.actorFrom(r))
+	d, err := s.Store.CreateDeployment(ctx, org, p, branch, sha, actor)
 	if err != nil {
 		s.clearDeploying(p.ID)
-		respond(w, nil, err)
-		return
+		return nil, err
 	}
 	go s.runDeploy(org, p, d, manifest, repo)
-	w.WriteHeader(http.StatusAccepted)
-	respond(w, d, nil)
+	return d, nil
+}
+
+// autoDeployMain deploys main after a merge when the project is adopted
+// (goku.yaml + Dockerfile); silently skips otherwise.
+func (s *Server) autoDeployMain(org string, p *store.Project) {
+	ctx := context.Background()
+	repo := s.RepoPath(org, p.Name)
+	if !gitrepo.HasFile(repo, "main", "goku.yaml") || !gitrepo.HasFile(repo, "main", "Dockerfile") {
+		return
+	}
+	if _, err := s.startDeploy(ctx, org, p, "main", "system:merge"); err != nil {
+		log.Printf("auto-deploy %s: %v", p.Name, err)
+	}
 }
 
 func (s *Server) clearDeploying(projectID string) {
@@ -119,10 +141,18 @@ func (s *Server) runDeploy(org string, p *store.Project, d *store.Deployment, ma
 		fail(err)
 		return
 	}
-	// Manifest env is plain (non-secret) config; provisioned values win.
+	// Precedence: manifest env < provisioned databases < secrets.
 	for k, v := range manifest.Services["api"].Env {
 		if _, taken := env[k]; !taken {
 			env[k] = v
+		}
+	}
+	if secrets, err := s.Store.SecretValues(ctx, p.ID); err == nil {
+		for k, v := range secrets {
+			env[k] = v
+		}
+		if len(secrets) > 0 {
+			logf("injecting %d secret(s)", len(secrets))
 		}
 	}
 	port := deploy.Port(p.Name)

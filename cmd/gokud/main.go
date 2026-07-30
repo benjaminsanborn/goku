@@ -47,6 +47,7 @@ func main() {
 			AppDomain:     envOr("GOKU_APP_DOMAIN", "localhost"),
 			PGSuperDSN:    dsn,
 		},
+		WebhookSecret: os.Getenv("GOKU_WEBHOOK_SECRET"),
 		OAuth: server.OAuthConfig{
 			GitHubClientID:     os.Getenv("GOKU_GITHUB_CLIENT_ID"),
 			GitHubClientSecret: os.Getenv("GOKU_GITHUB_CLIENT_SECRET"),

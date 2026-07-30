@@ -88,6 +88,9 @@ export default function ProjectPage() {
         </div>
       )}
 
+      <h2 className="section-h">Secrets</h2>
+      <SecretsPanel projectRef={ref!} />
+
       <h2 className="section-h">Branches</h2>
       <div className="list">
         {branches?.branches.map((b) => (
@@ -164,6 +167,66 @@ function DeploymentRow({ d }: { d: Deployment }) {
           <pre>{d.log || '…'}</pre>
         </div>
       )}
+    </div>
+  )
+}
+
+function SecretsPanel({ projectRef }: { projectRef: string }) {
+  const data = usePoll<{ secrets: { key: string; updated_at: string }[] }>(`/projects/${projectRef}/secrets`, 15000)
+  const [key, setKey] = useState('')
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+
+  const add = async () => {
+    if (!key.trim() || !value) return
+    try {
+      await api(`/projects/${projectRef}/secrets`, {
+        method: 'PUT',
+        body: JSON.stringify({ key: key.trim().toUpperCase(), value }),
+      })
+      setKey('')
+      setValue('')
+      setError('')
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  const remove = async (k: string) => {
+    await api(`/projects/${projectRef}/secrets/${k}`, { method: 'DELETE' }).catch(() => {})
+  }
+
+  return (
+    <div className="cs-item" style={{ cursor: 'default' }}>
+      <p className="page-sub" style={{ marginTop: 0 }}>
+        Write-only env vars injected into deployments. Values are never shown again; changes apply on the next deploy.
+      </p>
+      {data?.secrets.map((s) => (
+        <div className="row" key={s.key} style={{ padding: '4px 0' }}>
+          <span className="branch-name">{s.key}</span>
+          <span className="branch-sha">••••••••</span>
+          <span className="branch-when">{timeAgo(s.updated_at)}</span>
+          <div className="spacer" />
+          <button className="btn ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => remove(s.key)}>
+            remove
+          </button>
+        </div>
+      ))}
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="input" placeholder="KEY" style={{ width: 180 }} value={key} onChange={(e) => setKey(e.target.value)} />
+        <input
+          className="input"
+          type="password"
+          placeholder="value"
+          style={{ flex: 1 }}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+        />
+        <button className="btn ghost" onClick={add}>
+          Set
+        </button>
+      </div>
+      {error && <p style={{ color: 'var(--amber)', marginBottom: 0 }}>{error}</p>}
     </div>
   )
 }

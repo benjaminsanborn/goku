@@ -42,6 +42,8 @@ type Server struct {
 	BaseURL string
 	OAuth   OAuthConfig
 	Deploy  deploy.Target
+	// WebhookSecret verifies GitHub push webhooks (deploy-on-merge for linked repos).
+	WebhookSecret string
 
 	syncMu    sync.Mutex
 	lastSync  map[string]time.Time // project id → last upstream fetch
@@ -60,6 +62,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /v1/projects/{ref}/merge", s.handleMergeBranch)
 	api.HandleFunc("POST /v1/projects/{ref}/sync", s.handleSync)
 	api.HandleFunc("POST /v1/projects/{ref}/deploy", s.handleDeploy)
+	api.HandleFunc("PUT /v1/projects/{ref}/secrets", s.handleSetSecret)
+	api.HandleFunc("GET /v1/projects/{ref}/secrets", s.handleListSecrets)
+	api.HandleFunc("DELETE /v1/projects/{ref}/secrets/{key}", s.handleDeleteSecret)
 	api.HandleFunc("GET /v1/projects/{ref}/manifest", s.handleManifest)
 	api.HandleFunc("GET /v1/projects/{ref}/deployments", s.handleDeployments)
 	api.HandleFunc("GET /v1/events", s.listEvents)
@@ -74,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/google", s.handleAuthStart(s.googleOAuth))
 	mux.HandleFunc("GET /auth/google/callback", s.handleAuthCallback("google", s.googleOAuth))
 	mux.HandleFunc("POST /v1/logout", s.handleLogout)
+	mux.HandleFunc("POST /hooks/github", s.handleGitHubWebhook)
 	mux.Handle("/v1/", s.requireAuth(api))
 	mux.Handle("/git/", s.gitHandler())
 	mux.Handle("/", s.spaHandler())

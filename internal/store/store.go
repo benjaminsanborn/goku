@@ -101,7 +101,7 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	if _, err := pool.Exec(ctx, schema+usersSchema+deploymentsSchema); err != nil {
+	if _, err := pool.Exec(ctx, schema+usersSchema+deploymentsSchema+secretsSchema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	s := &Store{pool: pool}

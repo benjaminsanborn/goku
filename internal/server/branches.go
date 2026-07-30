@@ -162,10 +162,14 @@ func (s *Server) handleMergeBranch(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	mainSHA, err := s.mergeBranch(r.Context(), orgFrom(r.Context()), r.PathValue("ref"), in.Branch, s.actorFrom(r))
+	org := orgFrom(r.Context())
+	mainSHA, err := s.mergeBranch(r.Context(), org, r.PathValue("ref"), in.Branch, s.actorFrom(r))
 	if err != nil {
 		respond(w, nil, err)
 		return
+	}
+	if p, err := s.Store.GetProject(r.Context(), org, r.PathValue("ref")); err == nil {
+		go s.autoDeployMain(org, p)
 	}
 	respond(w, map[string]any{"merged": in.Branch, "main": mainSHA}, nil)
 }

@@ -147,6 +147,62 @@ func cmdDeploy(args []string) error {
 	}
 }
 
+// cmdSecrets manages write-only project secrets injected at deploy time.
+func cmdSecrets(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: goku secrets <set KEY=VALUE…|list|rm KEY>")
+	}
+	project, err := projectName()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "set":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: goku secrets set KEY=VALUE [KEY=VALUE…]")
+		}
+		for _, kv := range args[1:] {
+			key, value, ok := strings.Cut(kv, "=")
+			if !ok {
+				return fmt.Errorf("expected KEY=VALUE, got %q", kv)
+			}
+			if err := apiCall("PUT", "/v1/projects/"+project+"/secrets", map[string]string{"key": key, "value": value}, nil); err != nil {
+				return err
+			}
+			fmt.Printf("set %s\n", key)
+		}
+		fmt.Println("secrets take effect on the next deployment (goku deploy)")
+		return nil
+	case "list":
+		var resp struct {
+			Secrets []struct {
+				Key       string `json:"key"`
+				UpdatedAt string `json:"updated_at"`
+			} `json:"secrets"`
+		}
+		if err := apiCall("GET", "/v1/projects/"+project+"/secrets", nil, &resp); err != nil {
+			return err
+		}
+		if len(resp.Secrets) == 0 {
+			fmt.Println("no secrets")
+		}
+		for _, s := range resp.Secrets {
+			fmt.Printf("  %s\n", s.Key)
+		}
+		return nil
+	case "rm":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: goku secrets rm KEY")
+		}
+		if err := apiCall("DELETE", "/v1/projects/"+project+"/secrets/"+args[1], nil, nil); err != nil {
+			return err
+		}
+		fmt.Printf("deleted %s\n", args[1])
+		return nil
+	}
+	return fmt.Errorf("unknown secrets subcommand %q", args[0])
+}
+
 func cmdSync(args []string) error {
 	project := ""
 	if len(args) > 0 {
