@@ -102,6 +102,34 @@ func (s *Store) StopEnvironmentDeployments(ctx context.Context, orgID, projectID
 	s.audit(ctx, orgID, actor, "env.stop", "project/"+projectName, map[string]any{"branch": branch})
 }
 
+type Assignment struct {
+	Project  string
+	Branch   string
+	Instance string
+}
+
+// LiveAssignments lists what each instance is running for an org.
+func (s *Store) LiveAssignments(ctx context.Context, orgID string) ([]Assignment, error) {
+	rows, err := s.pool.Query(ctx, `
+		select p.name, d.branch, d.instance from deployments d
+		join projects p on p.id = d.project_id
+		where p.org_id = $1 and d.status in ('healthy', 'starting')
+		order by p.name, d.branch`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Assignment{}
+	for rows.Next() {
+		var a Assignment
+		if err := rows.Scan(&a.Project, &a.Branch, &a.Instance); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // InstanceOccupied reports whether any live deployment is placed on the
 // named instance (capacity-1 rule for ssh fleet members).
 func (s *Store) InstanceOccupied(ctx context.Context, instance string) (string, bool) {

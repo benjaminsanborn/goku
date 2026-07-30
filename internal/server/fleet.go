@@ -24,21 +24,28 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err)
 		return
 	}
-	// Assignments: what each instance is running. Every deployment so far
-	// runs on the local-driver instance; ssh targets come next.
-	healthy, _ := s.Store.AllHealthyDeployments(r.Context())
-	local := []string{}
-	for _, h := range healthy {
-		local = append(local, h.Project+" · main")
+	// Assignments come from live deployments' recorded placement; rows that
+	// predate the instance column count as local.
+	assignments := map[string][]string{}
+	localName := "local"
+	for _, i := range instances {
+		if i.Driver == "local" {
+			localName = i.Name
+		}
+	}
+	if rows, err := s.Store.LiveAssignments(r.Context(), org); err == nil {
+		for _, a := range rows {
+			name := a.Instance
+			if name == "" {
+				name = localName
+			}
+			assignments[name] = append(assignments[name], a.Project+" · "+a.Branch)
+		}
 	}
 	out := []map[string]any{}
 	for _, i := range instances {
-		assignments := []string{}
-		if i.Driver == "local" {
-			assignments = local
-		}
 		out = append(out, map[string]any{
-			"instance": i, "assignments": assignments,
+			"instance": i, "assignments": append([]string{}, assignments[i.Name]...),
 		})
 	}
 	respond(w, map[string]any{"instances": out}, nil)

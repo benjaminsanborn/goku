@@ -75,15 +75,9 @@ func Run(cfg Config) (string, error) {
 		}
 	}
 
-	// 2. Repos.
-	reposTar := filepath.Join(work, "repos.tar")
-	if err := exec.Command("tar", "-cf", reposTar, "-C", cfg.DataDir, "repos").Run(); err != nil {
-		return "", fmt.Errorf("tar repos: %w", err)
-	}
-
-	// 3. Bundle + local retention.
+	// 2. Bundle (db dumps + repos directory, extractable in place) + retention.
 	bundle := filepath.Join(backupsDir, "goku-backup-"+stamp+".tar.gz")
-	if err := exec.Command("tar", "-czf", bundle, "-C", work, ".").Run(); err != nil {
+	if err := exec.Command("tar", "-czf", bundle, "-C", work, "db", "-C", cfg.DataDir, "repos").Run(); err != nil {
 		return "", fmt.Errorf("bundle: %w", err)
 	}
 	prune(backupsDir, 7)
