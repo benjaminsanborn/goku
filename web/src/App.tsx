@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { api, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
+import FleetPage from './FleetPage'
 import ProjectPage from './ProjectPage'
 import OrgFooter from './OrgFooter'
 
@@ -47,12 +48,16 @@ export default function App() {
           <NavLink to="/" end>
             Projects
           </NavLink>
+          <NavLink to="/fleet">
+            Fleet
+          </NavLink>
         </nav>
         <OrgFooter />
       </aside>
       <main className="main">
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
+          <Route path="/fleet" element={<FleetPage />} />
           <Route path="/projects/:ref" element={<ProjectPage />} />
         </Routes>
       </main>

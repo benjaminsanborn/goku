@@ -147,4 +147,3 @@ func (s *Store) GitHubTokenForOrg(ctx context.Context, orgID string) string {
 		where m.org_id = $1 and u.github_token <> '' order by m.created_at limit 1`, orgID).Scan(&t)
 	return t
 }
-

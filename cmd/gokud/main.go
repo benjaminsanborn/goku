@@ -56,6 +56,13 @@ func main() {
 		},
 	}
 
+	// Register this host as an ordinary fleet member of the operator's org.
+	if host, err := os.Hostname(); err == nil {
+		if id, err := st.EnsureLocalInstance(context.Background(), host); err == nil {
+			go srv.VerifyInstanceByID(st.DefaultOrgID, id)
+		}
+	}
+
 	fmt.Printf("gokud — control plane\n")
 	fmt.Printf("  ui:   %s\n", baseURL)
 	fmt.Printf("  api:  %s/v1\n", baseURL)
