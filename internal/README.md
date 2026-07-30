@@ -58,6 +58,11 @@ password, OAuth, webhook secret, mounts paths); `host_mounts` in goku.yaml
 (operator-org only) give it the machine: `/var/lib/goku` repos, docker.sock,
 `/etc/goku` (apps.caddy), `/etc/caddy` (ro).
 
+Environments are per-branch: each gets its own service containers, database
+containers, and hostname (`<branch>--<project>.<domain>`); `main` keeps the
+manifest domains. Fleet instances enroll over SSH and are verified, with
+placement recorded per deployment (ssh deploy driver pending).
+
 Databases (the control plane's own included) run as per-project postgres:18
 containers (`goku-db-<project>-<resource>`, named volume, 127.0.0.1-published
 port); the host postgres is no longer used and holds a stale pre-migration

@@ -2,9 +2,9 @@
 
 Compliant CI/CD into AWS, built for AI agents.
 
-goku is a control plane your agents ship through: every project gets an isolated deployment target with curated resources (database, API, load balancer, storage, web), a git repository with a protected `main`, and **branch-based review**: work lands on conventional branches (feature/…, bugfix/… — conventionalbranch.org) that humans review and merge in the UI, just like GitHub renders branches. Your Claude connects over MCP and proposes; you approve. Locally, declared resources run as **cognates** (postgres, MinIO in docker) with the same env vars they'll have in the cloud.
+goku is a control plane your agents ship through: every project gets a git repository with a protected `main`, **branch-based review** (conventional branches, diffs, ff merges — like GitHub renders branches), and **deployments that materialize `goku.yaml` literally**: one container per service, a postgres container per database resource, path-routed HTTPS domains with automatic TLS. Branches deploy as their own live environments alongside main. Your Claude connects over MCP and proposes; you approve. Locally, the same manifest runs as **cognates** (postgres, MinIO in docker) with the identical env contract — and goku itself is deployed by goku.
 
-> Deployment today is **kamal-style containers on the goku host**: `goku deploy` builds the branch's Dockerfile, provisions declared databases on the host's postgres, runs the container with the env contract, health-checks it, and routes `https://<project>.goku.host` through Caddy with automatic TLS. AWS provisioning (Fargate/Aurora per the manifest) is design-complete ([docs/design](docs/design)) and comes next.
+> Deployment is **kamal-style containers on the goku host** today; AWS materialization of the same manifest (Fargate/Aurora) is design-complete and next ([docs/design](docs/design)). Current state + roadmap: [docs/design/11](docs/design/11-progress-and-next.md).
 
 ## Get started
 
@@ -62,13 +62,9 @@ goku push
 
 The branch appears on the project page with its diff against `main` — including any `goku.yaml` changes, and the architecture diagram for that branch. Review and hit **Merge** in the UI (fast-forward + branch cleanup), or tell your Claude to merge. Direct pushes to `main` are rejected by the server.
 
-### 6. Deploy
+### 6. Deploy — environments
 
-```sh
-goku deploy            # or the Deploy button in the UI, or ask your Claude
-```
-
-Builds the branch's Dockerfile into an image, provisions any `database` resources as real postgres databases (injected as `DATABASE_URL`), runs the container honoring `PORT`, health-checks the manifest's `health_check` path, then routes `https://<project>.goku.host` to it and retires the previous container. Deployment history — with live logs — is on the project page. goku itself is deployed this way: the production goku built and runs a staging goku at goku.goku.host from this very repo.
+Merging `main` auto-deploys it (native projects; linked projects deploy on GitHub pushes via webhook). Any branch can also become its **own live environment** — the **+** button in the UI (or `goku deploy <branch>`, or your Claude) ties a branch to a fleet instance and deploys it with its own containers and database at `https://<branch>--<project>.goku.host`, alongside main. Each environment shows its deploy history with live logs; every service container's logs live-tail from the UI, `goku logs [service] [-f]`, or the MCP `service_logs` tool. goku itself ships this way: pushing this repo to GitHub makes the production goku build and replace itself.
 
 ## Command reference
 
@@ -85,7 +81,9 @@ Builds the branch's Dockerfile into an image, provisions any `database` resource
 | `goku env` | print the injected env contract |
 | `goku run -- <cmd>` | run anything with the env injected |
 | `goku push` | push the current branch for review |
-| `goku deploy [branch]` | build + run the branch as a container on the goku host |
+| `goku deploy [branch] [--on inst]` | deploy a branch as a live environment |
+| `goku logs [service] [-f]` | tail a deployed container's logs |
+| `goku secrets set\|list\|rm` | write-only env injected into deployments |
 | `goku status` | project + branches from the CLI |
 
 Config: `~/.config/goku/config` (`GOKU_URL`, `GOKU_TOKEN`); env vars override.
