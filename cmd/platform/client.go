@@ -12,18 +12,31 @@ import (
 	"strings"
 )
 
+// Config precedence: env var, then ~/.config/platform/config (KEY=VALUE
+// lines), then dev defaults.
 func platformURL() string {
-	if v := os.Getenv("PLATFORM_URL"); v != "" {
-		return strings.TrimSuffix(v, "/")
-	}
-	return "http://localhost:8080"
+	return strings.TrimSuffix(configValue("PLATFORM_URL", "http://localhost:8080"), "/")
 }
 
 func platformToken() string {
-	if v := os.Getenv("PLATFORM_TOKEN"); v != "" {
+	return configValue("PLATFORM_TOKEN", "dev-token")
+}
+
+func configValue(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
 		return v
 	}
-	return "dev-token"
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if b, err := os.ReadFile(home + "/.config/platform/config"); err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && k == key {
+					return v
+				}
+			}
+		}
+	}
+	return fallback
 }
 
 // apiCall hits the control plane REST API with the platform token.

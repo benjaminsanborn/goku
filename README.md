@@ -68,6 +68,27 @@ platform push -d "What this change does and why"
 
 `platform status` shows the project and its changesets from the CLI; the UI shows the same plus the org-wide audit feed (`agent:*` actions badged amber, humans blue).
 
+## Deploying the control plane to a server
+
+The repo stays one unit; deployment splits the planes. The server runs `platformd` (API + git + MCP + UI); your workstation keeps only the `platform` CLI and an MCP registration pointing at the server.
+
+```sh
+# one-time host setup (the only sudo step; installs postgres, service user, systemd unit):
+ssh -t ubuntu 'sudo bash -s' < scripts/server-bootstrap.sh
+
+# every deploy after that (cross-compiles, rsyncs binary + UI, restarts, health-checks):
+scripts/deploy.sh                       # PLATFORM_HOST=<ssh-alias> to override
+```
+
+Bootstrap generates a random `PLATFORM_TOKEN` (left in `~/.platform-token` on the server) and writes `/etc/platform/platformd.env`. Point your workstation at the server via `~/.config/platform/config`:
+
+```
+PLATFORM_URL=http://<server-ip>:8080
+PLATFORM_TOKEN=<token>
+```
+
+and re-register MCP: `claude mcp add --transport http platform http://<server-ip>:8080/mcp --header "Authorization: Bearer <token>"`.
+
 ### What's deliberately not here yet
 
 AWS connection and CloudFormation provisioning, the build/deploy pipeline, preview deploys, approval policies, and real token/identity management (the single dev token maps to `agent:claude`). The design for all of it is in `docs/design/`.
