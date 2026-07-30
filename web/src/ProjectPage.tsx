@@ -42,10 +42,19 @@ export default function ProjectPage() {
       </div>
       <p className="page-sub">
         {project.region} · created {timeAgo(project.created_at)}
+        {project.upstream && (
+          <>
+            {' · '}synced from{' '}
+            <a href={`https://github.com/${project.upstream}`} target="_blank" rel="noreferrer">
+              <span style={{ fontFamily: 'var(--mono)' }}>github.com/{project.upstream}</span>
+            </a>{' '}
+            <SyncButton projectRef={ref!} />
+          </>
+        )}
       </p>
 
       {branch !== 'main' && detail && (
-        <BranchPanel projectRef={ref!} detail={detail} onMerged={() => setParams({})} />
+        <BranchPanel projectRef={ref!} detail={detail} linked={!!project.upstream} onMerged={() => setParams({})} />
       )}
 
       <h2 className="section-h">
@@ -86,13 +95,36 @@ export default function ProjectPage() {
 
 // BranchPanel is the review surface for a selected branch: ahead/behind,
 // the diff against main, and the merge action.
+function SyncButton({ projectRef }: { projectRef: string }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      className="btn ghost"
+      style={{ padding: '2px 10px', fontSize: 12 }}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          await api(`/projects/${projectRef}/sync`, { method: 'POST', body: '{}' })
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      {busy ? 'Syncing…' : 'Sync now'}
+    </button>
+  )
+}
+
 function BranchPanel({
   projectRef,
   detail,
+  linked,
   onMerged,
 }: {
   projectRef: string
   detail: BranchDetail
+  linked: boolean
   onMerged: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -132,7 +164,8 @@ function BranchPanel({
         <button className="btn ghost" onClick={() => setShowDiff(!showDiff)}>
           {showDiff ? 'Hide diff' : 'Show diff'}
         </button>
-        {!detail.merged && (
+        {!detail.merged && linked && <span className="pill human">merge on GitHub</span>}
+        {!detail.merged && !linked && (
           <button className="btn" onClick={merge} disabled={busy || detail.behind > 0}>
             {busy ? 'Merging…' : detail.behind > 0 ? 'Rebase needed' : 'Merge'}
           </button>

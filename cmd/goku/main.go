@@ -18,14 +18,14 @@ Usage:
   goku new <name>            create a project, clone it, scaffold the workspace
   goku import <repo> [name]  import a GitHub repo as a project (history preserved)
   goku clone <name>          clone an existing project into ./<name>
+  goku sync [name]           pull latest from a linked GitHub repo into goku
   goku add <type> <name>     add a resource to goku.yaml and start its local cognate
                                  (types: database, storage)
   goku dev                   start local cognates for everything in goku.yaml
   goku env                   print the injected environment contract
   goku run -- <cmd> [args]   run a command with the environment injected
-  goku push [-t title] [-d description]
-                                 push the current branch and open a changeset
-  goku status                show project status and changesets
+  goku push                  push the current branch for review
+  goku status                show project status and branches
   goku mcp                   serve MCP over stdio for Claude (registered by login)
 
 Environment:
@@ -54,6 +54,8 @@ func main() {
 		err = cmdImport(os.Args[2:])
 	case "clone":
 		err = cmdClone(os.Args[2:])
+	case "sync":
+		err = cmdSync(os.Args[2:])
 	case "add":
 		err = cmdAdd(os.Args[2:])
 	case "dev":

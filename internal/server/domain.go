@@ -30,6 +30,9 @@ func (s *Server) mergeBranch(ctx context.Context, orgID, projectRef, branch, act
 	if err != nil {
 		return "", err
 	}
+	if p.Upstream != "" {
+		return "", fmt.Errorf("this project is linked to github.com/%s — merge there; goku syncs automatically", p.Upstream)
+	}
 	repo := s.RepoPath(orgID, p.Name)
 	mainSHA, err := gitrepo.MergeFF(repo, branch)
 	if err != nil {

@@ -4,6 +4,7 @@ export type Project = {
   name: string
   region: string
   status: string
+  upstream: string
   created_at: string
 }
 

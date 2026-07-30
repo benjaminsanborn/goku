@@ -86,6 +86,26 @@ func cmdImport(args []string) error {
 	return nil
 }
 
+func cmdSync(args []string) error {
+	project := ""
+	if len(args) > 0 {
+		project = args[0]
+	} else {
+		var err error
+		if project, err = projectName(); err != nil {
+			return err
+		}
+	}
+	var resp struct {
+		Synced string `json:"synced"`
+	}
+	if err := apiCall("POST", "/v1/projects/"+project+"/sync", map[string]string{}, &resp); err != nil {
+		return err
+	}
+	fmt.Printf("synced from github.com/%s\n", resp.Synced)
+	return nil
+}
+
 func cmdClone(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: goku clone <name>")

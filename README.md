@@ -39,7 +39,7 @@ goku new demo && cd demo                  # fresh project
 goku import github.com/you/existing-app   # or bring an existing repo
 ```
 
-`goku new` creates the project, clones its repo, scaffolds `goku.yaml`, and pushes the initial commit. `goku import` brings a GitHub repo over **with full history, branches, and tags** (private repos work once someone in your org has signed in with GitHub), untouched — adopting the goku standard (goku.yaml, Dockerfile) happens on a branch afterwards, which is exactly the kind of work your Claude is good at. Both are also available in the UI (the create field accepts `owner/repo`) and as MCP tools. From here `main` is protected — it only moves by merging a branch.
+`goku new` creates the project, clones its repo, scaffolds `goku.yaml`, and pushes the initial commit. `goku import` brings a GitHub repo over **with full history, branches, and tags** (private repos work once someone in your org has signed in with GitHub), untouched. Imported projects stay **linked to GitHub as the source of truth**: goku auto-syncs when you view them (or `goku sync` / the UI's Sync button), and merging happens on GitHub — goku follows. Adopting the goku standard (goku.yaml, Dockerfile) happens on a branch afterwards, which is exactly the kind of work your Claude is good at. Both are also available in the UI (the create field accepts `owner/repo`) and as MCP tools. From here `main` is protected — it only moves by merging a branch.
 
 ### 4. Declare what you need; develop against cognates
 
@@ -71,6 +71,7 @@ The branch appears on the project page with its diff against `main` — includin
 | `goku mcp` | serve MCP over stdio for Claude (registered automatically) |
 | `goku new <name>` | create project + clone + scaffold + first push |
 | `goku clone <name>` | existing project → local workspace |
+| `goku sync [name]` | pull latest from a linked GitHub repo |
 | `goku add <database\|storage> <name>` | add resource to manifest + start its cognate |
 | `goku dev` | start cognates for everything in `goku.yaml` |
 | `goku env` | print the injected env contract |

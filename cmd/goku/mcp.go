@@ -71,6 +71,20 @@ func cmdMCP() error {
 		return nil, out, nil
 	})
 
+	type syncIn struct {
+		Project string `json:"project" jsonschema:"goku project name"`
+	}
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "sync_project",
+		Description: "Pull the latest branches and commits from a GitHub-linked project's upstream repo into goku. Linked projects auto-sync when viewed, so this is rarely needed — use it when the user says goku is missing something they just pushed to GitHub.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in syncIn) (*mcp.CallToolResult, map[string]any, error) {
+		var out map[string]any
+		if err := apiCall("POST", "/v1/projects/"+in.Project+"/sync", map[string]string{}, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	})
+
 	type startIn struct {
 		Project string `json:"project" jsonschema:"goku project name"`
 		Kind    string `json:"kind,omitempty" jsonschema:"conventional branch type: feature (default), bugfix, hotfix, chore, or release"`
@@ -193,7 +207,7 @@ func cmdMCP() error {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "merge_change",
-		Description: "Merge a branch into the project's main (fast-forward) and delete the branch. This is the human approval action — only call it when the user has explicitly asked you to merge.",
+		Description: "Merge a branch into the project's main (fast-forward) and delete the branch. This is the human approval action — only call it when the user has explicitly asked you to merge. GitHub-linked (imported) projects refuse this: merge on GitHub instead; goku syncs automatically.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in mergeIn) (*mcp.CallToolResult, map[string]any, error) {
 		var merged map[string]any
 		if err := apiCall("POST", "/v1/projects/"+in.Project+"/merge", map[string]string{"branch": in.Branch}, &merged); err != nil {

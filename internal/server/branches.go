@@ -1,14 +1,19 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/benjaminsanborn/goku/internal/gitrepo"
+	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 // conventionalKind extracts the conventionalbranch.org prefix (feature,
@@ -31,12 +36,74 @@ type branchView struct {
 	Merged bool   `json:"merged"`
 }
 
+// upstreamFetchURL builds the fetch URL for a linked project, injecting an
+// org member's GitHub token (never persisted in git config) for private repos.
+func (s *Server) upstreamFetchURL(ctx context.Context, org, upstream string) string {
+	if tok := s.Store.GitHubTokenForOrg(ctx, org); tok != "" {
+		return "https://x-access-token:" + url.QueryEscape(tok) + "@github.com/" + upstream + ".git"
+	}
+	return "https://github.com/" + upstream + ".git"
+}
+
+// maybeSyncUpstream keeps GitHub-linked projects fresh: viewing a project
+// kicks an async fetch from upstream, throttled to once a minute.
+func (s *Server) maybeSyncUpstream(org string, p *store.Project) {
+	if p.Upstream == "" {
+		return
+	}
+	s.syncMu.Lock()
+	if s.lastSync == nil {
+		s.lastSync = map[string]time.Time{}
+	}
+	if time.Since(s.lastSync[p.ID]) < time.Minute {
+		s.syncMu.Unlock()
+		return
+	}
+	s.lastSync[p.ID] = time.Now()
+	s.syncMu.Unlock()
+
+	repo := s.RepoPath(org, p.Name)
+	upstream := p.Upstream
+	go func() {
+		fetchURL := s.upstreamFetchURL(context.Background(), org, upstream)
+		if err := gitrepo.FetchUpstream(repo, fetchURL); err != nil {
+			log.Printf("upstream sync %s (%s): %v", repo, upstream, err)
+		}
+	}()
+}
+
+// handleSync is the manual, synchronous variant of upstream sync.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	org := orgFrom(r.Context())
+	p, err := s.Store.GetProject(r.Context(), org, r.PathValue("ref"))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if p.Upstream == "" {
+		httpError(w, http.StatusUnprocessableEntity, "project has no GitHub upstream — it is goku-native")
+		return
+	}
+	if err := gitrepo.FetchUpstream(s.RepoPath(org, p.Name), s.upstreamFetchURL(r.Context(), org, p.Upstream)); err != nil {
+		httpError(w, http.StatusBadGateway, "fetch from github.com/"+p.Upstream+" failed")
+		return
+	}
+	s.syncMu.Lock()
+	if s.lastSync == nil {
+		s.lastSync = map[string]time.Time{}
+	}
+	s.lastSync[p.ID] = time.Now()
+	s.syncMu.Unlock()
+	respond(w, map[string]any{"synced": p.Upstream}, nil)
+}
+
 func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
 	p, err := s.Store.GetProject(r.Context(), orgFrom(r.Context()), r.PathValue("ref"))
 	if err != nil {
 		respond(w, nil, err)
 		return
 	}
+	s.maybeSyncUpstream(orgFrom(r.Context()), p)
 	repo := s.RepoPath(orgFrom(r.Context()), p.Name)
 	branches, err := gitrepo.Branches(repo)
 	if err != nil {

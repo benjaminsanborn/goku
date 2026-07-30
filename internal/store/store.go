@@ -44,6 +44,8 @@ create table if not exists projects (
 	unique (org_id, name)
 );
 
+alter table projects add column if not exists upstream text not null default '';
+
 drop table if exists changesets;
 
 create table if not exists audit_events (
@@ -63,11 +65,14 @@ type Org struct {
 }
 
 type Project struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id"`
-	Name      string    `json:"name"`
-	Region    string    `json:"region"`
-	Status    string    `json:"status"`
+	ID     string `json:"id"`
+	OrgID  string `json:"org_id"`
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	Status string `json:"status"`
+	// Upstream is "owner/repo" for GitHub-linked (imported) projects: GitHub
+	// is the source of truth and goku mirrors it.
+	Upstream  string    `json:"upstream"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -193,7 +198,7 @@ func (s *Store) CreateProject(ctx context.Context, orgID, name, actor string) (*
 
 func (s *Store) ListProjects(ctx context.Context, orgID string) ([]Project, error) {
 	rows, err := s.pool.Query(ctx, `
-		select p.id, p.org_id, p.name, p.region, p.status, p.created_at
+		select p.id, p.org_id, p.name, p.region, p.status, p.upstream, p.created_at
 		from projects p where p.org_id = $1 order by p.created_at desc`, orgID)
 	if err != nil {
 		return nil, err
@@ -202,7 +207,7 @@ func (s *Store) ListProjects(ctx context.Context, orgID string) ([]Project, erro
 	projects := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.Upstream, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -214,10 +219,10 @@ func (s *Store) ListProjects(ctx context.Context, orgID string) ([]Project, erro
 func (s *Store) GetProject(ctx context.Context, orgID, ref string) (*Project, error) {
 	var p Project
 	err := s.pool.QueryRow(ctx, `
-		select p.id, p.org_id, p.name, p.region, p.status, p.created_at
+		select p.id, p.org_id, p.name, p.region, p.status, p.upstream, p.created_at
 		from projects p
 		where p.org_id = $1 and (p.id::text = $2 or p.name = lower($2))`,
-		orgID, ref).Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.CreatedAt)
+		orgID, ref).Scan(&p.ID, &p.OrgID, &p.Name, &p.Region, &p.Status, &p.Upstream, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("project %q: %w", ref, ErrNotFound)
 	}
@@ -225,6 +230,12 @@ func (s *Store) GetProject(ctx context.Context, orgID, ref string) (*Project, er
 		return nil, err
 	}
 	return &p, nil
+}
+
+// SetProjectUpstream links a project to its GitHub source of truth.
+func (s *Store) SetProjectUpstream(ctx context.Context, projectID, upstream string) error {
+	_, err := s.pool.Exec(ctx, `update projects set upstream = $1 where id = $2`, upstream, projectID)
+	return err
 }
 
 func (s *Store) RecordGitPush(ctx context.Context, orgID, projectRef, actor, branch, sha string) {

@@ -101,6 +101,21 @@ func CloneBareFrom(url, path string) error {
 	return InstallHooks(path)
 }
 
+// RemoveOrigin drops the origin remote (and any credentials embedded in its
+// URL) from a bare repo's config; upstream linkage lives in the database.
+func RemoveOrigin(path string) {
+	_, _ = git(path, "remote", "remove", "origin")
+}
+
+// FetchUpstream force-updates all branches from the upstream URL — for
+// GitHub-linked projects, upstream wins (including main; the pre-receive hook
+// only guards pushes, and this is intentional). Branches that exist only in
+// goku are left alone; no pruning.
+func FetchUpstream(path, url string) error {
+	_, err := git(path, "fetch", "--quiet", url, "+refs/heads/*:refs/heads/*")
+	return err
+}
+
 // HasFile reports whether a path exists at the tip of a branch.
 func HasFile(path, branch, file string) bool {
 	_, err := git(path, "cat-file", "-e", branch+":"+file)

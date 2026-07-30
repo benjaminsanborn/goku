@@ -64,6 +64,15 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "clone failed (is the repo accessible?): "+msg)
 		return
 	}
+	// GitHub stays the source of truth for imported projects: goku mirrors it.
+	// The clone left a (possibly tokenized) origin in git config — remove it;
+	// the upstream link lives in the DB and tokens are injected per-fetch.
+	gitrepo.RemoveOrigin(repoPath)
+	p.Upstream = owner + "/" + repo
+	if err := s.Store.SetProjectUpstream(r.Context(), p.ID, p.Upstream); err != nil {
+		respond(w, nil, err)
+		return
+	}
 
 	respond(w, map[string]any{
 		"project":    p,
