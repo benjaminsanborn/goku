@@ -37,12 +37,25 @@ export type AuditEvent = {
 import { useEffect, useState } from 'react'
 
 const BASE = '/v1'
+const TOKEN_KEY = 'goku-token'
+
+export const getToken = () => localStorage.getItem(TOKEN_KEY) ?? ''
+export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t)
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`,
+      'X-Goku-Actor': 'operator',
+      ...init?.headers,
+    },
   })
+  if (res.status === 401) {
+    window.dispatchEvent(new Event('goku-unauthorized'))
+    throw new Error('unauthorized')
+  }
   const body = await res.json()
   if (!res.ok) throw new Error(body.error ?? res.statusText)
   return body as T

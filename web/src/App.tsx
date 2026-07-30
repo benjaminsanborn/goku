@@ -1,14 +1,29 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
+import { getToken, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
 import ProjectPage from './ProjectPage'
 import ChangesetPage from './ChangesetPage'
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => getToken() !== '')
+
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setToken('')
+      setAuthed(false)
+    }
+    window.addEventListener('goku-unauthorized', onUnauthorized)
+    return () => window.removeEventListener('goku-unauthorized', onUnauthorized)
+  }, [])
+
+  if (!authed) return <TokenGate onSave={() => setAuthed(true)} />
+
   return (
     <div className="layout">
       <aside className="sidebar">
         <div className="brand">
-          <span className="dot">◆</span> platform
+          <span className="dot">◆</span> goku
         </div>
         <nav className="nav">
           <NavLink to="/" end>
@@ -23,6 +38,40 @@ export default function App() {
           <Route path="/projects/:ref/changesets/:id" element={<ChangesetPage />} />
         </Routes>
       </main>
+    </div>
+  )
+}
+
+function TokenGate({ onSave }: { onSave: () => void }) {
+  const [value, setValue] = useState('')
+  const save = () => {
+    if (!value.trim()) return
+    setToken(value.trim())
+    onSave()
+  }
+  return (
+    <div className="layout" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div className="card" style={{ width: 420, padding: 28 }}>
+        <div className="brand" style={{ marginBottom: 12 }}>
+          <span className="dot">◆</span> goku
+        </div>
+        <p className="page-sub">Enter the access token for this control plane (on the server: ~/.goku-token).</p>
+        <div className="row">
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            type="password"
+            placeholder="token"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            autoFocus
+          />
+          <button className="btn" onClick={save}>
+            Enter
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

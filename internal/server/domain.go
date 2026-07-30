@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/benjaminsanborn/platform/internal/gitrepo"
-	"github.com/benjaminsanborn/platform/internal/store"
+	"github.com/benjaminsanborn/goku/internal/gitrepo"
+	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 // createProject creates the project row and its bare git repository together.

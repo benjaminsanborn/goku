@@ -12,14 +12,14 @@ import (
 	"strings"
 )
 
-// Config precedence: env var, then ~/.config/platform/config (KEY=VALUE
+// Config precedence: env var, then ~/.config/goku/config (KEY=VALUE
 // lines), then dev defaults.
-func platformURL() string {
-	return strings.TrimSuffix(configValue("PLATFORM_URL", "http://localhost:8080"), "/")
+func gokuURL() string {
+	return strings.TrimSuffix(configValue("GOKU_URL", "http://localhost:8080"), "/")
 }
 
-func platformToken() string {
-	return configValue("PLATFORM_TOKEN", "dev-token")
+func gokuToken() string {
+	return configValue("GOKU_TOKEN", "dev-token")
 }
 
 func configValue(key, fallback string) string {
@@ -28,7 +28,7 @@ func configValue(key, fallback string) string {
 	}
 	home, err := os.UserHomeDir()
 	if err == nil {
-		if b, err := os.ReadFile(home + "/.config/platform/config"); err == nil {
+		if b, err := os.ReadFile(home + "/.config/goku/config"); err == nil {
 			for _, line := range strings.Split(string(b), "\n") {
 				if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && k == key {
 					return v
@@ -39,7 +39,7 @@ func configValue(key, fallback string) string {
 	return fallback
 }
 
-// apiCall hits the control plane REST API with the platform token.
+// apiCall hits the control plane REST API with the goku token.
 func apiCall(method, p string, body any, out any) error {
 	var buf bytes.Buffer
 	if body != nil {
@@ -47,15 +47,15 @@ func apiCall(method, p string, body any, out any) error {
 			return err
 		}
 	}
-	req, err := http.NewRequest(method, platformURL()+p, &buf)
+	req, err := http.NewRequest(method, gokuURL()+p, &buf)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+platformToken())
+	req.Header.Set("Authorization", "Bearer "+gokuToken())
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s unreachable — is platformd running? (%w)", platformURL(), err)
+		return fmt.Errorf("%s unreachable — is gokud running? (%w)", gokuURL(), err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 400 {
@@ -76,8 +76,8 @@ func apiCall(method, p string, body any, out any) error {
 
 // authedRemote embeds credentials so git push works without a credential helper.
 func authedRemote(project string) string {
-	u, _ := url.Parse(platformURL())
-	u.User = url.UserPassword("claude", platformToken())
+	u, _ := url.Parse(gokuURL())
+	u.User = url.UserPassword("claude", gokuToken())
 	u.Path = "/git/" + project + ".git"
 	return u.String()
 }
@@ -86,7 +86,7 @@ func authedRemote(project string) string {
 func projectName() (string, error) {
 	out, err := runGit("remote", "get-url", "origin")
 	if err != nil {
-		return "", fmt.Errorf("not inside a platform workspace (no origin remote)")
+		return "", fmt.Errorf("not inside a goku workspace (no origin remote)")
 	}
 	base := path.Base(strings.TrimSpace(out))
 	name := strings.TrimSuffix(base, ".git")

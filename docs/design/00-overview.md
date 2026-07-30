@@ -27,7 +27,7 @@ The constraint is the product. Because the resource catalog is small and the pip
 1. **Curated over general.** Five resource types, not five hundred. Each one is the production-grade version of the thing (Aurora, Fargate, ALB, S3, CloudFront) with security settings pre-decided and non-negotiable.
 2. **Customer's account, customer's data.** All workload resources live in the customer's AWS account via cross-account role assumption. The platform stores metadata, not workloads. This is both the compliance story and the billing story.
 3. **Every write is attributable.** Every mutation — git push, deploy, config change, resource creation — is attributed to a human or a named agent identity, in an append-only audit log.
-4. **Push-to-deploy, nothing else.** `git push platform main` is the deployment interface. No deploy YAML, no pipeline DSL. The pipeline is the same for everyone.
+4. **Push-to-deploy, nothing else.** `git push goku main` is the deployment interface. No deploy YAML, no pipeline DSL. The pipeline is the same for everyone.
 5. **Guardrails, then autonomy.** Operators set policy (approval gates, spend ceilings, protected resources); within policy, agents act autonomously.
 
 ## Non-goals

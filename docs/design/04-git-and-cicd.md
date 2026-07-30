@@ -21,7 +21,7 @@ MVP repo storage: bare repos on an EBS/EFS volume owned by a single git-writer i
 
 ## Pipeline
 
-One fixed pipeline shape. No pipeline configuration files. The repo controls exactly two things: *how it builds* (a `Dockerfile`; buildpacks deferred — [07](07-roadmap.md) Q2) and *what exists* (the declarative `platform.yaml` resource manifest — see [08](08-ux-helloworld.md); it is a catalog-bounded manifest, not a pipeline, and cannot express build steps, IAM, or networking).
+One fixed pipeline shape. No pipeline configuration files. The repo controls exactly two things: *how it builds* (a `Dockerfile`; buildpacks deferred — [07](07-roadmap.md) Q2) and *what exists* (the declarative `goku.yaml` resource manifest — see [08](08-ux-helloworld.md); it is a catalog-bounded manifest, not a pipeline, and cannot express build steps, IAM, or networking).
 
 ```mermaid
 sequenceDiagram
@@ -34,7 +34,7 @@ sequenceDiagram
     participant ECS as ECS/Fargate (customer acct)
     participant ALB as ALB
 
-    A->>G: git push platform main
+    A->>G: git push goku main
     G->>G: auth token → agent identity, write audit event
     G->>W: enqueue pipeline job (sha, actor) [same tx]
     W->>W: policy check (auto vs approval gate)

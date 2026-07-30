@@ -128,7 +128,7 @@ func DiffFiles(path, branch string) ([]File, error) {
 // given files, committed as the actor, via a temporary local clone. Used when
 // an agent proposes a changeset without a local workspace.
 func CommitFiles(path, branch, message, actor string, files []File) (string, error) {
-	tmp, err := os.MkdirTemp("", "platform-commit-*")
+	tmp, err := os.MkdirTemp("", "goku-commit-*")
 	if err != nil {
 		return "", err
 	}
@@ -152,7 +152,7 @@ func CommitFiles(path, branch, message, actor string, files []File) (string, err
 	if _, err := git(work, "add", "-A"); err != nil {
 		return "", err
 	}
-	if _, err := git(work, "-c", "user.name="+actor, "-c", "user.email=agent@platform.local",
+	if _, err := git(work, "-c", "user.name="+actor, "-c", "user.email=agent@goku.host",
 		"commit", "-m", message); err != nil {
 		return "", err
 	}

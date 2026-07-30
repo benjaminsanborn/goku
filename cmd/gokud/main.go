@@ -1,4 +1,4 @@
-// Command platformd runs the control plane: REST API, git server, MCP endpoint, and UI.
+// Command gokud runs the control plane: REST API, git server, MCP endpoint, and UI.
 package main
 
 import (
@@ -9,20 +9,20 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/benjaminsanborn/platform/internal/server"
-	"github.com/benjaminsanborn/platform/internal/store"
+	"github.com/benjaminsanborn/goku/internal/server"
+	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 func main() {
-	dsn := envOr("DATABASE_URL", "postgres://localhost:5432/platform_development")
+	dsn := envOr("DATABASE_URL", "postgres://localhost:5432/goku_development")
 	port := envOr("PORT", "8080")
-	token := envOr("PLATFORM_TOKEN", "dev-token")
+	token := envOr("GOKU_TOKEN", "dev-token")
 	webDist := envOr("WEB_DIST", "web/dist")
-	dataDir, err := filepath.Abs(envOr("PLATFORM_DATA", "data"))
+	dataDir, err := filepath.Abs(envOr("GOKU_DATA", "data"))
 	if err != nil {
 		log.Fatalf("data dir: %v", err)
 	}
-	baseURL := envOr("PLATFORM_BASE_URL", "http://localhost:"+port)
+	baseURL := envOr("GOKU_BASE_URL", "http://localhost:"+port)
 
 	st, err := store.New(context.Background(), dsn)
 	if err != nil {
@@ -32,13 +32,13 @@ func main() {
 
 	srv := &server.Server{Store: st, Token: token, WebDist: webDist, DataDir: dataDir, BaseURL: baseURL}
 
-	fmt.Printf("platformd — control plane\n")
+	fmt.Printf("gokud — control plane\n")
 	fmt.Printf("  ui:   %s\n", baseURL)
 	fmt.Printf("  api:  %s/v1\n", baseURL)
 	fmt.Printf("  git:  %s/git/<project>.git\n", baseURL)
 	fmt.Printf("  mcp:  %s/mcp\n", baseURL)
 	fmt.Printf("\ninstall into Claude Code:\n")
-	fmt.Printf("  claude mcp add --transport http platform %s/mcp --header \"Authorization: Bearer %s\"\n\n", baseURL, token)
+	fmt.Printf("  claude mcp add --transport http goku %s/mcp --header \"Authorization: Bearer %s\"\n\n", baseURL, token)
 
 	if err := http.ListenAndServe(":"+port, srv.Handler()); err != nil {
 		log.Fatal(err)

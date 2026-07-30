@@ -7,14 +7,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/benjaminsanborn/platform/internal/store"
+	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 // The MCP actor for this dev slice; real deployments resolve token → agent identity.
 const agentActor = "agent:claude"
 
 func (s *Server) mcpHandler() http.Handler {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "platform", Title: "Platform", Version: "0.1.0"}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "goku", Title: "Goku", Version: "0.1.0"}, nil)
 
 	type projectIn struct {
 		Project string `json:"project" jsonschema:"project name or id"`
@@ -36,7 +36,7 @@ func (s *Server) mcpHandler() http.Handler {
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "create_project",
-		Description: "Create a new project: an isolated deployment target with its own git repository, which will hold curated AWS resources (API, database, load balancer, storage, web). Returns the project and its git remote URL — clone it to start a local workspace (username: claude, password: your platform token). Prefer the 'platform new' CLI when working locally: it creates, clones, and scaffolds in one step.",
+		Description: "Create a new project: an isolated deployment target with its own git repository, which will hold curated AWS resources (API, database, load balancer, storage, web). Returns the project and its git remote URL — clone it to start a local workspace (username: claude, password: your goku token). Prefer the 'goku new' CLI when working locally: it creates, clones, and scaffolds in one step.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createProjectIn) (*mcp.CallToolResult, map[string]any, error) {
 		p, err := s.createProject(ctx, in.Name, agentActor)
 		if err != nil {
@@ -61,7 +61,7 @@ func (s *Server) mcpHandler() http.Handler {
 	})
 
 	type fileIn struct {
-		Path    string `json:"path" jsonschema:"repo-relative file path, e.g. main.go or platform.yaml"`
+		Path    string `json:"path" jsonschema:"repo-relative file path, e.g. main.go or goku.yaml"`
 		Content string `json:"content" jsonschema:"full file content"`
 	}
 	type openChangesetIn struct {

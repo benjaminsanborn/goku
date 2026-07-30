@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/benjaminsanborn/platform/internal/gitrepo"
+	"github.com/benjaminsanborn/goku/internal/gitrepo"
 )
 
 func (s *Server) RepoPath(project string) string {
@@ -36,7 +36,7 @@ func (s *Server) gitHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := s.gitAuth(r)
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Basic realm="platform git"`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="goku git"`)
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}

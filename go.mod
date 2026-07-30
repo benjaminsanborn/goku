@@ -1,4 +1,4 @@
-module github.com/benjaminsanborn/platform
+module github.com/benjaminsanborn/goku
 
 go 1.25.1
 

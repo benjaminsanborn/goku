@@ -1,4 +1,4 @@
-# Platform (working title)
+# goku
 
 Compliant CI/CD into AWS, built for AI agents.
 
@@ -19,19 +19,19 @@ Go 1.25+, Node 20+, PostgreSQL running locally, Docker (for local cognates), `gi
 ### 1. Run the control plane
 
 ```sh
-createdb platform_development          # once
+createdb goku_development          # once
 cd web && npm install && npm run build && cd ..
-go build -o bin/platformd ./cmd/platformd
-go build -o bin/platform  ./cmd/platform    # the CLI — put bin/ on your PATH
-./bin/platformd
+go build -o bin/gokud ./cmd/gokud
+go build -o bin/goku  ./cmd/goku    # the CLI — put bin/ on your PATH
+./bin/gokud
 ```
 
-One process serves the UI (http://localhost:8080), REST API (`/v1`), git (`/git/<project>.git`), and MCP (`/mcp`). Config via env: `DATABASE_URL`, `PORT`, `PLATFORM_TOKEN` (default `dev-token`), `PLATFORM_DATA` (bare repos, default `./data`), `WEB_DIST`.
+One process serves the UI (http://localhost:8080), REST API (`/v1`), git (`/git/<project>.git`), and MCP (`/mcp`). Config via env: `DATABASE_URL`, `PORT`, `GOKU_TOKEN` (default `dev-token`), `GOKU_DATA` (bare repos, default `./data`), `WEB_DIST`.
 
 ### 2. Install into your Claude
 
 ```sh
-claude mcp add --transport http platform http://localhost:8080/mcp \
+claude mcp add --transport http goku http://localhost:8080/mcp \
   --header "Authorization: Bearer dev-token"
 ```
 
@@ -40,20 +40,20 @@ MCP tools: `list_projects`, `create_project`, `get_project`, `open_changeset`, `
 ### 3. Create a project and workspace
 
 ```sh
-platform new demo && cd demo
+goku new demo && cd demo
 ```
 
-Creates the project (visible in the UI immediately), its bare repo on the platform, clones it into `./demo`, scaffolds `platform.yaml` + `.gitignore` + README, and pushes the initial commit. From here `main` is protected — it only moves by merging a changeset.
+Creates the project (visible in the UI immediately), its bare repo on the platform, clones it into `./demo`, scaffolds `goku.yaml` + `.gitignore` + README, and pushes the initial commit. From here `main` is protected — it only moves by merging a changeset.
 
 ### 4. Declare a resource; get its local cognate
 
 ```sh
-platform add database main     # edits platform.yaml AND starts postgres:16 in docker
-platform add storage assets    # MinIO with an S3-compatible API
-platform run -- psql "$DATABASE_URL" -c 'select 1'   # env injected automatically
+goku add database main     # edits goku.yaml AND starts postgres:16 in docker
+goku add storage assets    # MinIO with an S3-compatible API
+goku run -- psql "$DATABASE_URL" -c 'select 1'   # env injected automatically
 ```
 
-The manifest is the single source of truth: it declares *what the project needs*, and both planes materialize it — AWS on merge (future), docker cognates locally (`platform dev` restarts them; `platform env` prints the contract). Application code reads `DATABASE_URL`, `STORAGE_ENDPOINT`, etc. and never knows which plane it's on.
+The manifest is the single source of truth: it declares *what the project needs*, and both planes materialize it — AWS on merge (future), docker cognates locally (`goku dev` restarts them; `goku env` prints the contract). Application code reads `DATABASE_URL`, `STORAGE_ENDPOINT`, etc. and never knows which plane it's on.
 
 ### 5. Propose, review, merge
 
@@ -61,33 +61,33 @@ The manifest is the single source of truth: it declares *what the project needs*
 git checkout -b claude/hello-world
 # ... write code (your Claude does this part) ...
 git commit -am "Add hello world API"
-platform push -d "What this change does and why"
+goku push -d "What this change does and why"
 ```
 
-`platform push` pushes the branch and opens a **changeset** — the platform's PR. It appears in the project's changelog in the UI showing the full diff versus `main`, including any `platform.yaml` changes, attributed to whoever pushed. A human clicks **Merge** (fast-forward) in the UI — or asks their Claude to call `merge_changeset`. Agents without a local workspace can propose via MCP `open_changeset` with file contents, and the platform commits the branch for them.
+`goku push` pushes the branch and opens a **changeset** — the platform's PR. It appears in the project's changelog in the UI showing the full diff versus `main`, including any `goku.yaml` changes, attributed to whoever pushed. A human clicks **Merge** (fast-forward) in the UI — or asks their Claude to call `merge_changeset`. Agents without a local workspace can propose via MCP `open_changeset` with file contents, and the platform commits the branch for them.
 
-`platform status` shows the project and its changesets from the CLI; the UI shows the same plus the org-wide audit feed (`agent:*` actions badged amber, humans blue).
+`goku status` shows the project and its changesets from the CLI; the UI shows the same plus the org-wide audit feed (`agent:*` actions badged amber, humans blue).
 
 ## Deploying the control plane to a server
 
-The repo stays one unit; deployment splits the planes. The server runs `platformd` (API + git + MCP + UI); your workstation keeps only the `platform` CLI and an MCP registration pointing at the server.
+The repo stays one unit; deployment splits the planes. The server runs `gokud` (API + git + MCP + UI); your workstation keeps only the `goku` CLI and an MCP registration pointing at the server.
 
 ```sh
 # one-time host setup (the only sudo step; installs postgres, service user, systemd unit):
 ssh -t ubuntu 'sudo bash -s' < scripts/server-bootstrap.sh
 
 # every deploy after that (cross-compiles, rsyncs binary + UI, restarts, health-checks):
-scripts/deploy.sh                       # PLATFORM_HOST=<ssh-alias> to override
+scripts/deploy.sh                       # GOKU_HOST=<ssh-alias> to override
 ```
 
-Bootstrap generates a random `PLATFORM_TOKEN` (left in `~/.platform-token` on the server) and writes `/etc/platform/platformd.env`. Point your workstation at the server via `~/.config/platform/config`:
+Bootstrap generates a random `GOKU_TOKEN` (left in `~/.goku-token` on the server) and writes `/etc/goku/gokud.env`. Point your workstation at the server via `~/.config/goku/config`:
 
 ```
-PLATFORM_URL=http://<server-ip>:8080
-PLATFORM_TOKEN=<token>
+GOKU_URL=http://<server-ip>:8080
+GOKU_TOKEN=<token>
 ```
 
-and re-register MCP: `claude mcp add --transport http platform http://<server-ip>:8080/mcp --header "Authorization: Bearer <token>"`.
+and re-register MCP: `claude mcp add --transport http goku http://<server-ip>:8080/mcp --header "Authorization: Bearer <token>"`.
 
 ### What's deliberately not here yet
 
@@ -111,8 +111,8 @@ AWS connection and CloudFormation provisioning, the build/deploy pipeline, previ
 ## Layout
 
 ```
-cmd/platformd/       control plane server (REST + git + MCP + UI)
-cmd/platform/        workspace CLI (new, clone, add, dev, env, run, push, status)
+cmd/gokud/       control plane server (REST + git + MCP + UI)
+cmd/goku/        workspace CLI (new, clone, add, dev, env, run, push, status)
 internal/store/      PostgreSQL persistence + audit
 internal/server/     HTTP handlers: REST, MCP tools, git smart-HTTP, SPA
 internal/gitrepo/    bare-repo plumbing: hooks, diffs, ff-merge, commit-from-files

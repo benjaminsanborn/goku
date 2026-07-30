@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/benjaminsanborn/platform/internal/store"
+	"github.com/benjaminsanborn/goku/internal/store"
 )
 
 type Server struct {
@@ -22,17 +22,20 @@ type Server struct {
 }
 
 func (s *Server) Handler() http.Handler {
+	// The whole /v1 surface requires the token: this server faces the
+	// internet, and project code + audit data are as sensitive as writes.
+	api := http.NewServeMux()
+	api.HandleFunc("GET /v1/projects", s.listProjects)
+	api.HandleFunc("POST /v1/projects", s.handleCreateProject)
+	api.HandleFunc("GET /v1/projects/{ref}", s.getProject)
+	api.HandleFunc("GET /v1/projects/{ref}/changesets", s.listChangesets)
+	api.HandleFunc("POST /v1/projects/{ref}/changesets", s.handleOpenChangeset)
+	api.HandleFunc("GET /v1/changesets/{id}", s.getChangeset)
+	api.HandleFunc("POST /v1/changesets/{id}/merge", s.handleMerge)
+	api.HandleFunc("GET /v1/events", s.listEvents)
+
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /v1/projects", s.listProjects)
-	mux.HandleFunc("POST /v1/projects", s.handleCreateProject)
-	mux.HandleFunc("GET /v1/projects/{ref}", s.getProject)
-	mux.HandleFunc("GET /v1/projects/{ref}/changesets", s.listChangesets)
-	mux.HandleFunc("POST /v1/projects/{ref}/changesets", s.handleOpenChangeset)
-	mux.HandleFunc("GET /v1/changesets/{id}", s.getChangeset)
-	mux.HandleFunc("POST /v1/changesets/{id}/merge", s.handleMerge)
-	mux.HandleFunc("GET /v1/events", s.listEvents)
-
+	mux.Handle("/v1/", s.requireToken(api))
 	mux.Handle("/git/", s.gitHandler())
 	mux.Handle("/mcp", s.requireToken(s.mcpHandler()))
 	mux.Handle("/", s.spaHandler())
@@ -40,13 +43,14 @@ func (s *Server) Handler() http.Handler {
 	return cors(mux)
 }
 
-// actorFrom attributes a write: bearer-token callers are the agent, the
-// (localhost, unauthenticated) UI is the operator.
+// actorFrom attributes an authenticated write. The single-token dev slice
+// can't distinguish identities, so the UI self-identifies as the operator;
+// real token→identity mapping is designed in docs/design/06.
 func (s *Server) actorFrom(r *http.Request) string {
-	if r.Header.Get("Authorization") == "Bearer "+s.Token {
-		return "agent:claude"
+	if r.Header.Get("X-Goku-Actor") == "operator" {
+		return "user:operator"
 	}
-	return "user:operator"
+	return "agent:claude"
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +143,7 @@ func cors(next http.Handler) http.Handler {
 		if strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1") {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Goku-Actor, Mcp-Session-Id, Mcp-Protocol-Version")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

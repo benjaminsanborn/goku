@@ -14,7 +14,7 @@ One org, one project, hardcoded policy. Prove the riskiest seam end-to-end:
 - Minimal smart-HTTP git push → CodeBuild → ECS deploy → health-gated rollout
 - CLI-level output; no UI, no MCP
 
-*Exit criterion: `git push platform main` on a Dockerfile repo puts a container behind HTTPS in a fresh customer account, in one command from empty.*
+*Exit criterion: `git push goku main` on a Dockerfile repo puts a container behind HTTPS in a fresh customer account, in one command from empty.*
 
 ### Phase 1 — Agent-ready MVP
 - Remaining catalog: Database, Storage, Web page

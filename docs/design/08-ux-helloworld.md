@@ -19,8 +19,8 @@ sequenceDiagram
     UI-->>H: MCP install snippet + project ready-to-code (infra still provisioning)
     H->>C: paste MCP URL — "build me a todo app with a DB"
     C->>CP: get_project → catalog, constraints, git remote, manifest schema (MCP resources)
-    C->>C: scaffold app: code + Dockerfile + platform.yaml
-    C->>CP: git push platform claude/todo-mvp → open_changeset
+    C->>C: scaffold app: code + Dockerfile + goku.yaml
+    C->>CP: git push goku claude/todo-mvp → open_changeset
     CP-->>H: changelog entry: changeset #1 (diff, manifest plan, agent attribution)
     C->>CP: deploy_preview(changeset #1)
     CP->>AWS: build image (CodeBuild) → ephemeral service in existing VPC + ALB rule
@@ -33,12 +33,12 @@ sequenceDiagram
 
 ## What this flow changes in the earlier design (accepted)
 
-### 1. `platform.yaml` — a resource **manifest** in the repo (revises [03](03-provisioning.md)/[04](04-git-and-cicd.md))
+### 1. `goku.yaml` — a resource **manifest** in the repo (revises [03](03-provisioning.md)/[04](04-git-and-cicd.md))
 
 Resources are now declared in-repo rather than created via API calls. This is the right call for agents: one changeset atomically proposes *code + the infra it needs*, and the reviewable unit is a single diff.
 
 ```yaml
-# platform.yaml — declarative, catalog-only, bounded schema
+# goku.yaml — declarative, catalog-only, bounded schema
 services:
   api:
     type: api                 # → Fargate

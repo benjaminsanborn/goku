@@ -10,9 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const manifestFile = "platform.yaml"
+const manifestFile = "goku.yaml"
 
-// manifest is parsed loosely so `platform add` round-trips fields it doesn't
+// manifest is parsed loosely so `goku add` round-trips fields it doesn't
 // understand; the server-side schema validation is the strict gate.
 type manifest struct {
 	doc map[string]any
@@ -26,7 +26,7 @@ type resource struct {
 func loadManifest() (*manifest, error) {
 	b, err := os.ReadFile(manifestFile)
 	if err != nil {
-		return nil, fmt.Errorf("no %s here — run from a platform workspace root", manifestFile)
+		return nil, fmt.Errorf("no %s here — run from a goku workspace root", manifestFile)
 	}
 	doc := map[string]any{}
 	if err := yaml.Unmarshal(b, &doc); err != nil {
@@ -84,9 +84,9 @@ func port(parts ...string) int {
 }
 
 func scaffoldManifest() string {
-	return `# platform.yaml — declares what this project needs.
-# The platform materializes these as AWS resources on merge; locally,
-# 'platform dev' runs cognates (postgres, minio) with the same env contract.
+	return `# goku.yaml — declares what this project needs.
+# Goku materializes these as AWS resources on merge; locally,
+# 'goku dev' runs cognates (postgres, minio) with the same env contract.
 
 services:
   api:
@@ -96,10 +96,10 @@ services:
     health_check: /
 
 resources: {}
-  # Added via 'platform add database main' / 'platform add storage assets'
+  # Added via 'goku add database main' / 'goku add storage assets'
 
 routes:
-  - domain: default      # <project>.app.<platform-domain>
+  - domain: default      # <project>.app.goku.host
     service: api
 `
 }

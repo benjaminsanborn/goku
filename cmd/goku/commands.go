@@ -21,7 +21,7 @@ type projectResp struct {
 
 func cmdNew(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: platform new <name>")
+		return fmt.Errorf("usage: goku new <name>")
 	}
 	name := args[0]
 
@@ -39,8 +39,8 @@ func cmdNew(args []string) error {
 	}
 
 	writeIfMissing(manifestFile, scaffoldManifest())
-	writeIfMissing(".gitignore", ".platform/\n")
-	writeIfMissing("README.md", "# "+name+"\n\nA platform project. `platform dev` starts local cognates; push a branch and open a changeset to propose changes.\n")
+	writeIfMissing(".gitignore", ".goku/\n")
+	writeIfMissing("README.md", "# "+name+"\n\nA goku project. `goku dev` starts local cognates; push a branch and open a changeset to propose changes.\n")
 
 	for _, gitArgs := range [][]string{
 		{"add", "-A"},
@@ -53,14 +53,14 @@ func cmdNew(args []string) error {
 	}
 
 	fmt.Printf("workspace ready: ./%s\n", name)
-	fmt.Printf("  ui:     %s/projects/%s\n", platformURL(), name)
-	fmt.Printf("  next:   cd %s && platform add database main && platform dev\n", name)
+	fmt.Printf("  ui:     %s/projects/%s\n", gokuURL(), name)
+	fmt.Printf("  next:   cd %s && goku add database main && goku dev\n", name)
 	return nil
 }
 
 func cmdClone(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: platform clone <name>")
+		return fmt.Errorf("usage: goku clone <name>")
 	}
 	name := args[0]
 	if err := apiCall("GET", "/v1/projects/"+name, nil, &struct{}{}); err != nil {
@@ -75,7 +75,7 @@ func cmdClone(args []string) error {
 
 func cmdAdd(args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("usage: platform add <database|storage> <name>")
+		return fmt.Errorf("usage: goku add <database|storage> <name>")
 	}
 	kind, name := args[0], args[1]
 	m, err := loadManifest()
@@ -111,7 +111,7 @@ func cmdRun(args []string) error {
 		args = args[1:]
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platform run -- <command> [args…]")
+		return fmt.Errorf("usage: goku run -- <command> [args…]")
 	}
 	lines, err := loadEnvFile()
 	if err != nil {
@@ -164,7 +164,7 @@ func cmdPush(args []string) error {
 		return err
 	}
 	fmt.Printf("changeset #%d opened: %s\n", cs.Number, *title)
-	fmt.Printf("  review: %s/projects/%s/changesets/%s\n", platformURL(), project, cs.ID)
+	fmt.Printf("  review: %s/projects/%s/changesets/%s\n", gokuURL(), project, cs.ID)
 	return nil
 }
 

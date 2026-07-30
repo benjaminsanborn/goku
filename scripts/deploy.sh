@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Deploy the control plane to the server. No sudo needed after bootstrap.
+# Deploy the goku control plane to the server. No sudo needed after bootstrap.
 #   scripts/deploy.sh            deploys to host 'ubuntu' (ssh alias)
-#   PLATFORM_HOST=myhost scripts/deploy.sh
+#   GOKU_HOST=myhost scripts/deploy.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-HOST="${PLATFORM_HOST:-ubuntu}"
+HOST="${GOKU_HOST:-ubuntu}"
 ARCH="$(ssh "$HOST" uname -m)"
 case "$ARCH" in
   x86_64) GOARCH=amd64 ;;
@@ -14,23 +14,25 @@ case "$ARCH" in
 esac
 
 echo "== build (linux/$GOARCH) =="
-GOOS=linux GOARCH=$GOARCH CGO_ENABLED=0 go build -o build/platformd-linux ./cmd/platformd
+GOOS=linux GOARCH=$GOARCH CGO_ENABLED=0 go build -o build/gokud-linux ./cmd/gokud
 (cd web && npm run --silent build)
 
 echo "== ship =="
-rsync -az build/platformd-linux "$HOST":/opt/platform/bin/platformd.new
-rsync -az --delete web/dist/ "$HOST":/opt/platform/web/dist/
-ssh "$HOST" 'mv /opt/platform/bin/platformd.new /opt/platform/bin/platformd && sudo -n systemctl restart platformd'
+rsync -az build/gokud-linux "$HOST":/opt/goku/bin/gokud.new
+rsync -az --delete web/dist/ "$HOST":/opt/goku/web/dist/
+ssh "$HOST" 'mv /opt/goku/bin/gokud.new /opt/goku/bin/gokud && sudo -n systemctl restart gokud'
 
 echo "== health check =="
-BASE_URL="$(ssh "$HOST" "grep PLATFORM_BASE_URL /etc/platform/platformd.env 2>/dev/null | cut -d= -f2-" || true)"
+ENVFILE="$(ssh "$HOST" 'cat /etc/goku/gokud.env 2>/dev/null' || true)"
+BASE_URL="$(grep '^GOKU_BASE_URL=' <<<"$ENVFILE" | cut -d= -f2- || true)"
+TOKEN="$(grep '^GOKU_TOKEN=' <<<"$ENVFILE" | cut -d= -f2- || true)"
 BASE_URL="${BASE_URL:-http://$HOST:8080}"
 for _ in $(seq 1 15); do
-  if curl -sf "$BASE_URL/v1/projects" > /dev/null; then
-    echo "platformd healthy at $BASE_URL"
+  if curl -sf -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/projects" > /dev/null; then
+    echo "gokud healthy at $BASE_URL"
     exit 0
   fi
   sleep 1
 done
-echo "health check failed — inspect with: ssh $HOST sudo -n journalctl -u platformd -n 50" >&2
+echo "health check failed — inspect with: ssh $HOST sudo -n journalctl -u gokud -n 50" >&2
 exit 1
