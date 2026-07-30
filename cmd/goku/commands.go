@@ -203,6 +203,46 @@ func cmdSecrets(args []string) error {
 	return fmt.Errorf("unknown secrets subcommand %q", args[0])
 }
 
+// cmdLogs tails a service container's logs (api by default; -f follows).
+func cmdLogs(args []string) error {
+	project, err := projectName()
+	if err != nil {
+		return err
+	}
+	service := "api"
+	follow := false
+	for _, a := range args {
+		if a == "-f" || a == "--follow" {
+			follow = true
+		} else {
+			service = a
+		}
+	}
+	var resp struct {
+		Units []struct {
+			Name      string `json:"name"`
+			Container string `json:"container"`
+		} `json:"units"`
+	}
+	if err := apiCall("GET", "/v1/projects/"+project+"/services", nil, &resp); err != nil {
+		return err
+	}
+	container := ""
+	for _, u := range resp.Units {
+		if u.Name == service {
+			container = u.Container
+		}
+	}
+	if container == "" {
+		return fmt.Errorf("service %q has no running container (goku deploy first?)", service)
+	}
+	path := "/v1/projects/" + project + "/logs?tail=200&container=" + url.QueryEscape(container)
+	if follow {
+		path += "&follow=1"
+	}
+	return apiStream(path, os.Stdout)
+}
+
 func cmdSync(args []string) error {
 	project := ""
 	if len(args) > 0 {

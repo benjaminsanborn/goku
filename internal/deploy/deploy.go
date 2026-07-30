@@ -264,6 +264,14 @@ func BuildWebImage(repoPath, project, sha string, svc Service, logf Logf) (strin
 	return image, nil
 }
 
+// ServiceContainerPrefix is the docker name prefix for a project's service
+// containers; DBContainerName the (stable) name for a database resource.
+func ServiceContainerPrefix(project string) string { return "goku-svc-" + sanitize(project) + "-" }
+
+func DBContainerName(project, resource string) string {
+	return "goku-db-" + sanitize(project) + "-" + sanitize(resource)
+}
+
 // Run starts a service container (host networking; the app must honor PORT).
 func Run(project, service, image string, port int, env map[string]string, hostMounts []string, logf Logf) (string, error) {
 	name := fmt.Sprintf("goku-svc-%s-%s-%d", sanitize(project), sanitize(service), time.Now().Unix())
@@ -359,19 +367,20 @@ func WriteRoutes(t Target, sites map[string][]SiteEntry, logf Logf) error {
 	sort.Strings(hosts)
 	for _, h := range hosts {
 		entries := sites[h]
+		// flush_interval -1: stream immediately (live log tails, SSE).
 		if len(entries) == 1 && len(entries[0].Paths) == 0 {
-			fmt.Fprintf(&b, "%s {\n\treverse_proxy localhost:%d\n}\n", h, entries[0].Port)
+			fmt.Fprintf(&b, "%s {\n\treverse_proxy localhost:%d {\n\t\tflush_interval -1\n\t}\n}\n", h, entries[0].Port)
 			continue
 		}
 		fmt.Fprintf(&b, "%s {\n", h)
 		for i, e := range entries {
 			if len(e.Paths) > 0 {
-				fmt.Fprintf(&b, "\t@m%d path %s\n\thandle @m%d {\n\t\treverse_proxy localhost:%d\n\t}\n", i, strings.Join(e.Paths, " "), i, e.Port)
+				fmt.Fprintf(&b, "\t@m%d path %s\n\thandle @m%d {\n\t\treverse_proxy localhost:%d {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", i, strings.Join(e.Paths, " "), i, e.Port)
 			}
 		}
 		for _, e := range entries {
 			if len(e.Paths) == 0 {
-				fmt.Fprintf(&b, "\thandle {\n\t\treverse_proxy localhost:%d\n\t}\n", e.Port)
+				fmt.Fprintf(&b, "\thandle {\n\t\treverse_proxy localhost:%d {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", e.Port)
 				break
 			}
 		}

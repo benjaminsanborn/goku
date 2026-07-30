@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -78,6 +79,27 @@ func apiCallAt(base, token, method, p string, body any, out any) error {
 		return json.NewDecoder(res.Body).Decode(out)
 	}
 	return nil
+}
+
+// apiStream GETs a text/stream endpoint and copies it to out until EOF or
+// interrupt (used for live log tails).
+func apiStream(p string, out io.Writer) error {
+	req, err := http.NewRequest("GET", gokuURL()+p, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+gokuToken())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return fmt.Errorf("%s", strings.TrimSpace(string(body)))
+	}
+	_, err = io.Copy(out, res.Body)
+	return err
 }
 
 // authedRemote embeds credentials so git push works without a credential helper.

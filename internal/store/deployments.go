@@ -45,6 +45,7 @@ type Deployment struct {
 	Domain    string    `json:"domain"`
 	URL       string    `json:"url"`
 	Log       string    `json:"log"`
+	Routes    []byte    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -120,12 +121,17 @@ func (s *Store) ListDeployments(ctx context.Context, orgID, projectRef string, l
 // ActiveDeployment returns the project's current healthy deployment, if any.
 func (s *Store) ActiveDeployment(ctx context.Context, projectID string) (*Deployment, error) {
 	var d Deployment
+	var routesText string
 	err := s.pool.QueryRow(ctx, `
-		select id, project_id, branch, sha, image, port, status, actor, url, log, created_at, updated_at
+		select id, project_id, branch, sha, image, port, status, actor, url, log,
+		       coalesce(routes, 'null'::jsonb)::text, created_at, updated_at
 		from deployments where project_id = $1 and status = 'healthy'
 		order by created_at desc limit 1`, projectID).
 		Scan(&d.ID, &d.ProjectID, &d.Branch, &d.SHA, &d.Image, &d.Port, &d.Status,
-			&d.Actor, &d.URL, &d.Log, &d.CreatedAt, &d.UpdatedAt)
+			&d.Actor, &d.URL, &d.Log, &routesText, &d.CreatedAt, &d.UpdatedAt)
+	if routesText != "null" {
+		d.Routes = []byte(routesText)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

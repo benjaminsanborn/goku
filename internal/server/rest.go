@@ -67,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /v1/projects/{ref}/secrets/{key}", s.handleDeleteSecret)
 	api.HandleFunc("GET /v1/projects/{ref}/manifest", s.handleManifest)
 	api.HandleFunc("GET /v1/projects/{ref}/deployments", s.handleDeployments)
+	api.HandleFunc("GET /v1/projects/{ref}/services", s.handleServices)
+	api.HandleFunc("GET /v1/projects/{ref}/logs", s.handleServiceLogs)
 	api.HandleFunc("GET /v1/instances", s.handleListInstances)
 	api.HandleFunc("POST /v1/instances", s.handleAddInstance)
 	api.HandleFunc("POST /v1/instances/{id}/verify", s.handleVerifyInstance)

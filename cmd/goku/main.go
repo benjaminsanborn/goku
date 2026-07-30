@@ -27,6 +27,7 @@ Usage:
   goku push                  push the current branch for review
   goku deploy [branch]       build + run the branch as a container on the goku host
   goku secrets set|list|rm   write-only env secrets injected into deployments
+  goku logs [service] [-f]   tail a deployed service's logs (api, web, db…)
   goku status                show project status and branches
   goku mcp                   serve MCP over stdio for Claude (registered by login)
 
@@ -62,6 +63,8 @@ func main() {
 		err = cmdDeploy(os.Args[2:])
 	case "secrets":
 		err = cmdSecrets(os.Args[2:])
+	case "logs":
+		err = cmdLogs(os.Args[2:])
 	case "add":
 		err = cmdAdd(os.Args[2:])
 	case "dev":

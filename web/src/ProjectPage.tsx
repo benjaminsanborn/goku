@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, timeAgo, usePoll, type Branch, type BranchDetail, type Project } from './api'
-import ArchDiagram, { type Manifest } from './ArchDiagram'
+import ArchDiagram, { type Manifest, type Unit } from './ArchDiagram'
+import LogsDrawer from './LogsDrawer'
 
 type Deployment = {
   id: string
@@ -35,6 +36,8 @@ export default function ProjectPage() {
     branch === 'main' ? '' : `/projects/${ref}/branch?name=${encodeURIComponent(branch)}`,
     5000,
   )
+  const services = usePoll<{ units: Unit[] }>(`/projects/${ref}/services`, 8000)
+  const [logsUnit, setLogsUnit] = useState<Unit | null>(null)
 
   if (!project) return null
 
@@ -69,7 +72,32 @@ export default function ProjectPage() {
       <h2 className="section-h">
         Architecture <span className="section-note">{branch}</span>
       </h2>
-      <ArchDiagram manifest={manifest} />
+      <ArchDiagram manifest={manifest} units={branch === 'main' ? services?.units : undefined} onLogs={setLogsUnit} />
+
+      <h2 className="section-h">Services</h2>
+      <div className="list">
+        {services?.units.length === 0 && <p className="page-sub">Nothing declared in goku.yaml yet.</p>}
+        {services?.units.map((u) => (
+          <div className="branch-item" key={u.kind + u.name} style={{ cursor: u.container ? 'pointer' : 'default' }}
+            onClick={() => u.container && setLogsUnit(u)}>
+            <span className={`unit-dot ${u.status}`}>●</span>
+            <span className="branch-name">{u.name}</span>
+            <span className="pill human">{u.kind === 'database' ? 'postgres' : u.type}</span>
+            {u.instance && <span className="pill open">on {u.instance}</span>}
+            <span className="branch-subject">{u.image}</span>
+            <span className="spacer" />
+            <span className="branch-when">{u.status === 'not_deployed' ? 'not deployed' : u.uptime}</span>
+            {u.container && (
+              <button className="btn ghost" style={{ padding: '2px 10px', fontSize: 12 }}
+                onClick={(e) => { e.stopPropagation(); setLogsUnit(u) }}>
+                logs
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {logsUnit && <LogsDrawer projectRef={ref!} unit={logsUnit} onClose={() => setLogsUnit(null)} />}
 
       <div className="row" style={{ marginTop: 28 }}>
         <h2 className="section-h" style={{ margin: 0 }}>
