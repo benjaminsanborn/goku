@@ -123,7 +123,7 @@ Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/goku
+ReadWritePaths=/var/lib/goku /etc/goku/apps.caddy
 PrivateTmp=true
 ProtectHome=true
 

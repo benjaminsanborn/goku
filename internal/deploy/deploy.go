@@ -254,7 +254,8 @@ func WriteRoutes(t Target, routes map[string]int, logf Logf) error {
 	if err := os.WriteFile(t.AppsCaddyFile, []byte(b.String()), 0o644); err != nil {
 		return err
 	}
-	if _, err := run(logf, "sudo", "-n", "systemctl", "reload", "caddy"); err != nil {
+	// Reload via Caddy's admin API (localhost:2019) — no privileges needed.
+	if _, err := run(logf, "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"); err != nil {
 		return fmt.Errorf("caddy reload: %w", err)
 	}
 	logf("routes updated")
