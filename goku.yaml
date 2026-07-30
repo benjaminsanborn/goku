@@ -17,10 +17,19 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/goku:/etc/goku                    # apps.caddy (rw)
       - /etc/caddy:/etc/caddy:ro               # caddy reload needs the config
+  web:
+    type: web            # React + Vite SPA served by a static caddy container
+    target: web          # Dockerfile stage holding the built assets
+    dist: /src/web/dist
+    spa: true
+
 resources:
   db:
     type: database       # postgres:18 container with a persistent volume
 
 routes:
-  - domain: goku.host    # interim: api serves everything (SPA baked into image)
+  - domain: goku.host    # TLS via the host Caddy + Let's Encrypt
     service: api
+    paths: ["/v1/*", "/git/*", "/auth/*", "/hooks/*"]
+  - domain: goku.host
+    service: web         # everything else: the SPA
