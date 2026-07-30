@@ -47,14 +47,14 @@ container. Local dev cognates (postgres/minio) off the same manifest.
 
 ## Next improvements, in rough priority order
 
-1. **Data durability (do this first).** The container postgres volume and
-   `/var/lib/goku` repos have no backups. Nightly `pg_dump` + repo bundles
-   shipped off-box (even just S3/rsync to another machine), retention, and a
-   tested restore doc.
-2. **SSH deploy driver.** The last missing organ of fleet: build via
-   `git archive | ssh docker build -`, remote db containers, health over ssh,
-   central Caddy routing to `instance:port`. Everything else (enrollment,
-   verification, capacity, picker UI, placement records) already exists.
+1. ~~**Data durability.**~~ **Done (v0.9.0)**: nightly encrypted bundles
+   (db dumps + repos) with local retention and off-box push to a private
+   GitHub repo; restore tested.
+2. ~~**SSH deploy driver.**~~ **Done (v0.9.0)**: remote builds from piped
+   archives, remote db/service containers, ssh health checks, central
+   routing to instance ports; verified against a loopback-enrolled instance.
+   Remaining gaps: web services and host_mounts are local-only; remote log
+   tailing routes through the local docker only.
 3. **Runtime health monitoring.** A deployment that passes its health check
    and crashes an hour later still shows "healthy". A monitor loop should
    re-check containers, flip status, surface restarts in the UI, and alert.

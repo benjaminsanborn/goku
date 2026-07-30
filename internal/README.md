@@ -68,6 +68,18 @@ containers (`goku-db-<project>-<resource>`, named volume, 127.0.0.1-published
 port); the host postgres is no longer used and holds a stale pre-migration
 copy of the goku db as a cold fallback.
 
+**Backups**: nightly (a loop in gokud runs when >20h stale; manually:
+`sudo -u goku /opt/goku/bin/gokud backup`) — dumps every `goku-db-*`
+container + the repos into `/var/lib/goku/backups/` (7 kept), encrypts with
+`/etc/goku/backup.key` (KEEP A COPY IN A PASSWORD MANAGER), and force-pushes
+the latest bundle to the private `GOKU_BACKUP_REPO` GitHub repo (RESTORE.md
+included there; restore was tested end-to-end).
+
+**SSH deploy driver**: `--on <instance>` builds on the instance from a piped
+`git archive`, runs remote db + service containers, health-checks over ssh,
+and routes the central Caddy at `instance:port`. Web services and
+host_mounts are local-only for now; capacity-1 per ssh instance.
+
 **Break-glass**: if the container is wedged, the pre-cutover binary and unit
 still exist: `sudo systemctl start gokud` (serves :8080) and point goku.host
 at it in `/etc/goku/apps.caddy` (`reverse_proxy localhost:8080`), then
