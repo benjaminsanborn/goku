@@ -4,6 +4,8 @@ import { api, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
 import FleetPage from './FleetPage'
 import ProvidersPage from './ProvidersPage'
+import DatabasesPage from './DatabasesPage'
+import DatabasePage from './DatabasePage'
 import ProjectPage from './ProjectPage'
 import OrgFooter from './OrgFooter'
 
@@ -52,6 +54,9 @@ export default function App() {
           <NavLink to="/fleet">
             Fleet
           </NavLink>
+          <NavLink to="/databases">
+            Databases
+          </NavLink>
           <NavLink to="/providers">
             Providers
           </NavLink>
@@ -62,6 +67,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/fleet" element={<FleetPage />} />
+          <Route path="/databases" element={<DatabasesPage />} />
+          <Route path="/databases/:id" element={<DatabasePage />} />
           <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/projects/:ref" element={<ProjectPage />} />
         </Routes>

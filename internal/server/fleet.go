@@ -216,18 +216,23 @@ func (s *Server) executorFor(inst *store.Instance) executor {
 			cleanup: func() {},
 		}
 	}
+	return s.sshExecutor(inst.Address, inst.SSHKey)
+}
 
-	// ssh driver: key to a 0600 temp file; host keys pinned per data dir.
+// sshExecutor runs commands on any machine goku holds a key for — fleet
+// instances and managed databases alike.
+func (s *Server) sshExecutor(address, sshKey string) executor {
+	// key to a 0600 temp file; host keys pinned per data dir.
 	keyFile, _ := os.CreateTemp("", "goku-ssh-*")
 	keyFile.Chmod(0o600)
-	keyFile.WriteString(inst.SSHKey)
-	if !strings.HasSuffix(inst.SSHKey, "\n") {
+	keyFile.WriteString(sshKey)
+	if !strings.HasSuffix(sshKey, "\n") {
 		keyFile.WriteString("\n")
 	}
 	keyFile.Close()
 
-	target, port := inst.Address, "22"
-	if host, p, ok := strings.Cut(inst.Address, ":"); ok {
+	target, port := address, "22"
+	if host, p, ok := strings.Cut(address, ":"); ok {
 		target, port = host, p
 	}
 	knownHosts := filepath.Join(s.DataDir, "ssh_known_hosts")

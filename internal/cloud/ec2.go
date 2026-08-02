@@ -27,8 +27,8 @@ type Logf func(format string, args ...any)
 // public inbound at all, while unmeshed instances get SSH and the app port
 // range opened to the control plane's egress address only.
 const (
-	privateGroupName = "goku-fleet-private"
-	directGroupName  = "goku-fleet-direct"
+	privateGroupName = "goku-%s-private"
+	directGroupName  = "goku-%s-direct"
 )
 
 // appPortLow/appPortHigh mirror deploy.Port's range — the ports the central
@@ -39,11 +39,30 @@ const (
 	appPortHigh = 39999
 )
 
+// PortRange is one TCP ingress rule on an unmeshed instance.
+type PortRange struct {
+	From int
+	To   int
+	Note string
+}
+
 // Options configure one launch.
 type Options struct {
 	Name string
 	// Type is the EC2 instance type; empty means t3.small.
 	Type string
+	// Purpose separates security groups and tags by what the machine is for
+	// ("fleet", "db"): a database should never inherit the app port range.
+	Purpose string
+	// DataVolumeGB attaches a second EBS volume, left unformatted here — the
+	// caller's setup script owns the filesystem. Stateful workloads keep
+	// their data off the root disk so the instance can be replaced.
+	DataVolumeGB int
+	// Ingress overrides the ports opened to AllowCIDR when there is no
+	// tailnet. Empty means ssh plus the app port range.
+	Ingress []PortRange
+	// Setup is appended to cloud-init after docker and tailscale are up.
+	Setup string
 	// TailscaleAuthKey, when set, joins the instance to the tailnet at boot
 	// and leaves its security group with no ingress rules at all.
 	TailscaleAuthKey string
@@ -65,11 +84,34 @@ func cloudInit(o Options) string {
 		fmt.Fprintf(&b, "tailscale up --authkey=%s --hostname=%s --accept-dns=false\n",
 			shellQuote(o.TailscaleAuthKey), shellQuote(o.Hostname()))
 	}
+	if o.Setup != "" {
+		b.WriteString(o.Setup)
+		if !strings.HasSuffix(o.Setup, "\n") {
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 
-// Hostname is the name the instance reports to the tailnet.
-func (o Options) Hostname() string { return "goku-" + o.Name }
+// Hostname is the name the instance reports to the tailnet. Databases are
+// namespaced so a database and a fleet instance can share a name.
+func (o Options) Hostname() string {
+	if o.Purpose == "db" {
+		return "goku-db-" + o.Name
+	}
+	return "goku-" + o.Name
+}
+
+// ingress is the rule set for an unmeshed instance of this purpose.
+func (o Options) ingress() []PortRange {
+	if len(o.Ingress) > 0 {
+		return o.Ingress
+	}
+	return []PortRange{
+		{22, 22, "goku control plane ssh"},
+		{appPortLow, appPortHigh, "goku control plane app routing"},
+	}
+}
 
 // shellQuote makes a value safe to interpolate into the boot script.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
@@ -124,7 +166,7 @@ func (a AWS) Provision(ctx context.Context, o Options, logf Logf) (*Machine, err
 	var runOut struct {
 		InstanceID string `xml:"instancesSet>item>instanceId"`
 	}
-	err = a.query(ctx, "ec2", url.Values{
+	form := url.Values{
 		"Action":                              {"RunInstances"},
 		"Version":                             {ec2Version},
 		"ImageId":                             {ami},
@@ -143,7 +185,16 @@ func (a AWS) Provision(ctx context.Context, o Options, logf Logf) (*Machine, err
 		"BlockDeviceMapping.1.DeviceName":     {"/dev/sda1"},
 		"BlockDeviceMapping.1.Ebs.VolumeSize": {"30"},
 		"BlockDeviceMapping.1.Ebs.VolumeType": {"gp3"},
-	}, &runOut)
+	}
+	if o.DataVolumeGB > 0 {
+		// A separate volume for state: the instance can be replaced or
+		// resized without touching the data on it.
+		form.Set("BlockDeviceMapping.2.DeviceName", "/dev/sdf")
+		form.Set("BlockDeviceMapping.2.Ebs.VolumeSize", fmt.Sprint(o.DataVolumeGB))
+		form.Set("BlockDeviceMapping.2.Ebs.VolumeType", "gp3")
+		form.Set("BlockDeviceMapping.2.Ebs.DeleteOnTermination", "true")
+	}
+	err = a.query(ctx, "ec2", form, &runOut)
 	if err != nil {
 		_ = a.query(ctx, "ec2", url.Values{"Action": {"DeleteKeyPair"}, "Version": {ec2Version}, "KeyName": {keyName}}, nil)
 		return nil, err
@@ -212,9 +263,15 @@ func (a AWS) defaultVPC(ctx context.Context) (string, error) {
 // are re-authorized on every launch so a control plane whose public address
 // has changed re-adds itself instead of locking the fleet out.
 func (a AWS) ensureSecurityGroup(ctx context.Context, vpc string, o Options, logf Logf) (string, error) {
-	name, description := privateGroupName, "goku fleet: tailnet only, no public ingress"
+	purpose := o.Purpose
+	if purpose == "" {
+		purpose = "fleet"
+	}
+	name := fmt.Sprintf(privateGroupName, purpose)
+	description := "goku " + purpose + ": tailnet only, no public ingress"
 	if o.TailscaleAuthKey == "" {
-		name, description = directGroupName, "goku fleet: control plane ingress only"
+		name = fmt.Sprintf(directGroupName, purpose)
+		description = "goku " + purpose + ": control plane ingress only"
 	}
 
 	var found struct {
@@ -247,25 +304,34 @@ func (a AWS) ensureSecurityGroup(ctx context.Context, vpc string, o Options, log
 		return group, nil
 	}
 
-	logf("security group %s: allowing ssh and app ports from %s", name, o.AllowCIDR)
-	for i, rule := range []struct{ from, to, note string }{
-		{"22", "22", "goku control plane ssh"},
-		{fmt.Sprint(appPortLow), fmt.Sprint(appPortHigh), "goku control plane app routing"},
-	} {
+	logf("security group %s: allowing %s from %s", name, portSummary(o.ingress()), o.AllowCIDR)
+	for i, rule := range o.ingress() {
 		err := a.query(ctx, "ec2", url.Values{
 			"Action": {"AuthorizeSecurityGroupIngress"}, "Version": {ec2Version},
 			"GroupId":                                {group},
 			"IpPermissions.1.IpProtocol":             {"tcp"},
-			"IpPermissions.1.FromPort":               {rule.from},
-			"IpPermissions.1.ToPort":                 {rule.to},
+			"IpPermissions.1.FromPort":               {fmt.Sprint(rule.From)},
+			"IpPermissions.1.ToPort":                 {fmt.Sprint(rule.To)},
 			"IpPermissions.1.IpRanges.1.CidrIp":      {o.AllowCIDR},
-			"IpPermissions.1.IpRanges.1.Description": {rule.note},
+			"IpPermissions.1.IpRanges.1.Description": {rule.Note},
 		}, nil)
 		if err != nil && !strings.Contains(err.Error(), "Duplicate") {
 			return "", fmt.Errorf("authorize rule %d: %w", i+1, err)
 		}
 	}
 	return group, nil
+}
+
+func portSummary(rules []PortRange) string {
+	parts := make([]string, 0, len(rules))
+	for _, r := range rules {
+		if r.From == r.To {
+			parts = append(parts, fmt.Sprint(r.From))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d-%d", r.From, r.To))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (a AWS) waitForRunning(ctx context.Context, instanceID string, logf Logf) (string, error) {
