@@ -259,6 +259,54 @@ func CommitFiles(path, branch, message, actor string, files []File) (string, err
 	return Head(path, branch)
 }
 
+// CommitToBranch writes files onto an existing branch (creating it from main
+// when it doesn't exist yet) and pushes. Unlike CommitFiles it never discards
+// a branch's history — the architecture builder saves onto whatever branch
+// the operator is looking at.
+func CommitToBranch(path, branch, message, actor string, files []File) (string, error) {
+	tmp, err := os.MkdirTemp("", "goku-commit-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	work := filepath.Join(tmp, "work")
+	if _, err := git("", "clone", "--quiet", path, work); err != nil {
+		return "", err
+	}
+	// An unborn repo has nothing to check out; the first commit creates the
+	// branch either way.
+	if _, err := git(work, "rev-parse", "--verify", "refs/remotes/origin/"+branch); err == nil {
+		if _, err := git(work, "checkout", "--quiet", branch); err != nil {
+			return "", err
+		}
+	} else if _, err := git(work, "checkout", "-b", branch); err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		p := filepath.Join(work, filepath.Clean("/"+f.Path))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(p, []byte(f.Content), 0o644); err != nil {
+			return "", err
+		}
+	}
+	if _, err := git(work, "add", "-A"); err != nil {
+		return "", err
+	}
+	if out, err := git(work, "status", "--porcelain"); err == nil && strings.TrimSpace(out) == "" {
+		return Head(path, branch)
+	}
+	if _, err := git(work, "-c", "user.name="+actor, "-c", "user.email=agent@goku.host",
+		"commit", "-m", message); err != nil {
+		return "", err
+	}
+	if _, err := git(work, "push", "--quiet", "origin", branch); err != nil {
+		return "", err
+	}
+	return Head(path, branch)
+}
+
 // IsMerged reports whether branch is fully contained in main.
 func IsMerged(path, branch string) bool {
 	head, err := Head(path, branch)

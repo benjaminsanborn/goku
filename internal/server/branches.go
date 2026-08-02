@@ -206,6 +206,9 @@ type serviceView struct {
 	Size        string `json:"size,omitempty"`
 	Port        int    `json:"port,omitempty"`
 	HealthCheck string `json:"health_check,omitempty"`
+	Target      string `json:"target,omitempty"`
+	Dist        string `json:"dist,omitempty"`
+	SPA         bool   `json:"spa,omitempty"`
 }
 
 type resourceView struct {
@@ -214,8 +217,9 @@ type resourceView struct {
 }
 
 type routeView struct {
-	Domain  string `json:"domain"`
-	Service string `json:"service"`
+	Domain  string   `json:"domain"`
+	Service string   `json:"service"`
+	Paths   []string `json:"paths,omitempty"`
 }
 
 func parseManifestView(raw, branch string) map[string]any {
@@ -231,6 +235,9 @@ func parseManifestView(raw, branch string) map[string]any {
 				sv.Type, _ = spec["type"].(string)
 				sv.Size, _ = spec["size"].(string)
 				sv.HealthCheck, _ = spec["health_check"].(string)
+				sv.Target, _ = spec["target"].(string)
+				sv.Dist, _ = spec["dist"].(string)
+				sv.SPA, _ = spec["spa"].(bool)
 				if port, ok := spec["port"].(int); ok {
 					sv.Port = port
 				}
@@ -255,14 +262,27 @@ func parseManifestView(raw, branch string) map[string]any {
 				rt := routeView{}
 				rt.Domain, _ = spec["domain"].(string)
 				rt.Service, _ = spec["service"].(string)
+				if paths, ok := spec["paths"].([]any); ok {
+					for _, p := range paths {
+						if str, ok := p.(string); ok {
+							rt.Paths = append(rt.Paths, str)
+						}
+					}
+				}
 				routes = append(routes, rt)
 			}
 		}
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
+	// layout is the architecture builder's canvas positions; it round-trips
+	// untouched and means nothing to the deploy engine.
+	layout := map[string]any{}
+	if m, ok := doc["layout"].(map[string]any); ok {
+		layout = m
+	}
 	return map[string]any{
 		"adopted": true, "branch": branch,
-		"services": services, "resources": resources, "routes": routes,
+		"services": services, "resources": resources, "routes": routes, "layout": layout,
 	}
 }

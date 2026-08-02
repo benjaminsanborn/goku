@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, timeAgo, usePoll, type Branch, type BranchDetail, type Project } from './api'
 import ArchDiagram, { type Manifest, type Unit } from './ArchDiagram'
+import ArchBuilder from './ArchBuilder'
 import LogsDrawer from './LogsDrawer'
 
 type Deployment = {
@@ -39,6 +40,7 @@ export default function ProjectPage() {
   )
   const services = usePoll<{ units: Unit[] }>(`/projects/${ref}/services`, 8000)
   const [logsUnit, setLogsUnit] = useState<Unit | null>(null)
+  const [building, setBuilding] = useState(false)
 
   if (!project) return null
 
@@ -70,10 +72,27 @@ export default function ProjectPage() {
         <BranchPanel projectRef={ref!} detail={detail} linked={!!project.upstream} onMerged={() => setParams({})} />
       )}
 
-      <h2 className="section-h">
-        Architecture <span className="section-note">{branch}</span>
-      </h2>
-      <ArchDiagram manifest={manifest} units={branch === 'main' ? services?.units : undefined} onLogs={setLogsUnit} />
+      <div className="row">
+        <h2 className="section-h">
+          Architecture <span className="section-note">{branch}</span>
+        </h2>
+        <div className="spacer" />
+        {manifest && !building && (
+          <button className="btn ghost" onClick={() => setBuilding(true)}>
+            {manifest.adopted ? 'Edit' : 'Build goku.yaml'}
+          </button>
+        )}
+      </div>
+      {building && manifest ? (
+        <ArchBuilder
+          projectRef={ref!}
+          branch={branch}
+          manifest={manifest}
+          onClose={() => setBuilding(false)}
+        />
+      ) : (
+        <ArchDiagram manifest={manifest} units={branch === 'main' ? services?.units : undefined} onLogs={setLogsUnit} />
+      )}
 
       <h2 className="section-h">Services</h2>
       <div className="list">

@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { api, setToken } from './api'
 import ProjectsPage from './ProjectsPage'
 import FleetPage from './FleetPage'
+import ProvidersPage from './ProvidersPage'
 import ProjectPage from './ProjectPage'
 import OrgFooter from './OrgFooter'
 
@@ -51,6 +52,9 @@ export default function App() {
           <NavLink to="/fleet">
             Fleet
           </NavLink>
+          <NavLink to="/providers">
+            Providers
+          </NavLink>
         </nav>
         <OrgFooter />
       </aside>
@@ -58,6 +62,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/fleet" element={<FleetPage />} />
+          <Route path="/providers" element={<ProvidersPage />} />
           <Route path="/projects/:ref" element={<ProjectPage />} />
         </Routes>
       </main>

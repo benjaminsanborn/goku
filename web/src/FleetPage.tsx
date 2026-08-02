@@ -9,6 +9,8 @@ type Instance = {
   status: string
   facts: Record<string, string>
   check_log: string
+  provider_id: string
+  external_id: string
   created_at: string
   last_checked_at: string | null
 }
@@ -51,7 +53,7 @@ export default function FleetPage() {
 function InstanceCard({ i, assignments }: { i: Instance; assignments: string[] }) {
   const [showLog, setShowLog] = useState(false)
   const statusClass =
-    i.status === 'ready' ? 'merged' : i.status === 'verifying' ? 'open' : 'agent'
+    i.status === 'ready' ? 'merged' : i.status === 'verifying' || i.status === 'provisioning' ? 'open' : 'agent'
 
   return (
     <div className="cs-item" style={{ cursor: 'default' }}>
@@ -62,6 +64,7 @@ function InstanceCard({ i, assignments }: { i: Instance; assignments: string[] }
         <span className={`pill ${statusClass}`}>{i.status}</span>
         <span className="pill human">{i.driver}</span>
         {i.address && <span className="branch-sha">{i.address}</span>}
+        {i.external_id && <span className="branch-sha">{i.external_id}</span>}
         <div className="spacer" />
         <button
           className="btn ghost"
@@ -77,9 +80,12 @@ function InstanceCard({ i, assignments }: { i: Instance; assignments: string[] }
           <button
             className="btn ghost"
             style={{ padding: '2px 10px', fontSize: 12 }}
-            onClick={() => api(`/instances/${i.id}`, { method: 'DELETE' })}
+            onClick={() => {
+              if (i.provider_id && !confirm(`Remove ${i.name} and terminate it in the cloud provider?`)) return
+              api(`/instances/${i.id}`, { method: 'DELETE' })
+            }}
           >
-            remove
+            {i.provider_id ? 'terminate' : 'remove'}
           </button>
         )}
       </div>

@@ -428,3 +428,55 @@ a { color: inherit; text-decoration: none; }
   .logs-drawer { height: 70vh; }
   .arch-instance-inner { flex-wrap: wrap; }
 }
+
+/* Architecture builder: a 2d canvas whose nodes become goku.yaml. */
+.builder-body { display: flex; gap: 14px; align-items: flex-start; }
+.canvas {
+  position: relative;
+  flex: 1;
+  height: 460px;
+  overflow: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 20px 20px;
+  touch-action: none;
+}
+.canvas-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.canvas-node {
+  position: absolute;
+  padding: 10px 12px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+}
+.canvas-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.canvas-node.service { border-left: 3px solid rgba(124, 158, 255, 0.8); }
+.canvas-node.resource { border-left: 3px solid rgba(74, 222, 128, 0.7); }
+.canvas-node.route { border-left: 3px solid rgba(251, 191, 36, 0.7); }
+.canvas-x {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.canvas-x:hover { color: var(--amber); }
+.canvas-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-faint); }
+.builder-side { width: 320px; flex-shrink: 0; }
+.inspector { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.field > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); }
+.field.row { flex-direction: row; align-items: center; }
+
+@media (max-width: 900px) {
+  .builder-body { flex-direction: column; }
+  .builder-side { width: 100%; }
+}

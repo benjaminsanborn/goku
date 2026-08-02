@@ -101,7 +101,7 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	if _, err := pool.Exec(ctx, schema+usersSchema+deploymentsSchema+secretsSchema+instancesSchema); err != nil {
+	if _, err := pool.Exec(ctx, schema+usersSchema+deploymentsSchema+secretsSchema+providersSchema+instancesSchema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	s := &Store{pool: pool}
@@ -278,6 +278,12 @@ func (s *Store) ListAuditEvents(ctx context.Context, orgID string, limit int) ([
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// Audit records an event from a handler that has no store method of its own
+// (the architecture builder writing goku.yaml, for one).
+func (s *Store) Audit(ctx context.Context, orgID, actor, action, subject string, detail map[string]any) {
+	s.audit(ctx, orgID, actor, action, subject, detail)
 }
 
 func (s *Store) audit(ctx context.Context, orgID, actor, action, subject string, detail map[string]any) {

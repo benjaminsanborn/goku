@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/benjaminsanborn/goku/internal/cloud"
 
 	"github.com/benjaminsanborn/goku/internal/store"
 )
@@ -70,7 +74,9 @@ func (s *Server) handleAddInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := orgFrom(r.Context())
-	inst, err := s.Store.CreateInstance(r.Context(), org, strings.ToLower(in.Name), "ssh", in.Address, in.SSHKey, s.actorFrom(r))
+	inst, err := s.Store.CreateInstance(r.Context(), org, store.NewInstance{
+		Name: strings.ToLower(in.Name), Driver: "ssh", Address: in.Address, SSHKey: in.SSHKey,
+	}, s.actorFrom(r))
 	if err != nil {
 		respond(w, nil, err)
 		return
@@ -90,9 +96,46 @@ func (s *Server) handleVerifyInstance(w http.ResponseWriter, r *http.Request) {
 	respond(w, map[string]any{"verifying": inst.Name}, nil)
 }
 
+// handleDeleteInstance deregisters an instance. Machines goku provisioned are
+// also terminated in the provider account — leaving them running would bill
+// the operator for a machine nothing can reach anymore.
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
-	err := s.Store.DeleteInstance(r.Context(), orgFrom(r.Context()), r.PathValue("id"), s.actorFrom(r))
-	respond(w, map[string]any{"deleted": true}, err)
+	org := orgFrom(r.Context())
+	inst, err := s.Store.GetInstance(r.Context(), org, r.PathValue("id"))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	provider := (*store.Provider)(nil)
+	if inst.ProviderID != "" && inst.ExternalID != "" {
+		provider, _ = s.Store.GetProvider(r.Context(), org, inst.ProviderID)
+	}
+	deleted, err := s.Store.DeleteInstance(r.Context(), org, inst.ID, s.actorFrom(r))
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	// A provisioned machine is also torn down at the provider, and dropped
+	// from the tailnet so terminated instances don't linger as devices.
+	netProvider, _ := s.Store.ProviderByKind(r.Context(), org, "tailscale")
+	terminated := false
+	if provider != nil && provider.Kind == "aws" {
+		terminated = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			aws := cloud.AWSFrom(provider.Credentials, provider.Region)
+			if err := aws.Terminate(ctx, deleted.ExternalID, deleted.KeyName); err != nil {
+				log.Printf("terminate %s: %v", deleted.Name, err)
+			}
+			if netProvider != nil {
+				if err := cloud.TailscaleFrom(netProvider.Credentials).RemoveDevice(ctx, "goku-"+deleted.Name); err != nil {
+					log.Printf("tailnet cleanup %s: %v", deleted.Name, err)
+				}
+			}
+		}()
+	}
+	respond(w, map[string]any{"deleted": true, "terminated": terminated}, nil)
 }
 
 // VerifyInstanceByID re-runs verification (exported for boot registration).

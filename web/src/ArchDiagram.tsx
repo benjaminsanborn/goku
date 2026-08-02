@@ -2,9 +2,21 @@ export type Manifest = {
   adopted: boolean
   branch: string
   error?: string
-  services?: { name: string; type: string; size?: string; port?: number; health_check?: string }[]
+  services?: {
+    name: string
+    type: string
+    size?: string
+    port?: number
+    health_check?: string
+    target?: string
+    dist?: string
+    spa?: boolean
+  }[]
   resources?: { name: string; type: string }[]
-  routes?: { domain: string; service: string }[]
+  routes?: { domain: string; service: string; paths?: string[] }[]
+  // layout holds the architecture builder's canvas positions as [x, y],
+  // keyed "service/api", "resource/db", "route/0".
+  layout?: Record<string, [number, number]>
 }
 
 export type Unit = {
