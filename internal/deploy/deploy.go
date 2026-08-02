@@ -410,6 +410,16 @@ type SiteEntry struct {
 	Upstream string   `json:"upstream,omitempty"` // instance host; empty = localhost
 }
 
+// upstream is the address Caddy dials for an entry: the fleet instance that
+// runs it, or the control plane's own loopback for local deployments.
+func (e SiteEntry) upstream() string {
+	host := e.Upstream
+	if host == "" {
+		host = "localhost"
+	}
+	return fmt.Sprintf("%s:%d", host, e.Port)
+}
+
 // WriteRoutes regenerates the Caddy site blocks: per host, path-matched
 // entries first (manifest order), then the fallback service.
 func WriteRoutes(t Target, sites map[string][]SiteEntry, logf Logf) error {
@@ -428,18 +438,18 @@ func WriteRoutes(t Target, sites map[string][]SiteEntry, logf Logf) error {
 		entries := sites[h]
 		// flush_interval -1: stream immediately (live log tails, SSE).
 		if len(entries) == 1 && len(entries[0].Paths) == 0 {
-			fmt.Fprintf(&b, "%s {\n\treverse_proxy localhost:%d {\n\t\tflush_interval -1\n\t}\n}\n", h, entries[0].Port)
+			fmt.Fprintf(&b, "%s {\n\treverse_proxy %s {\n\t\tflush_interval -1\n\t}\n}\n", h, entries[0].upstream())
 			continue
 		}
 		fmt.Fprintf(&b, "%s {\n", h)
 		for i, e := range entries {
 			if len(e.Paths) > 0 {
-				fmt.Fprintf(&b, "\t@m%d path %s\n\thandle @m%d {\n\t\treverse_proxy localhost:%d {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", i, strings.Join(e.Paths, " "), i, e.Port)
+				fmt.Fprintf(&b, "\t@m%d path %s\n\thandle @m%d {\n\t\treverse_proxy %s {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", i, strings.Join(e.Paths, " "), i, e.upstream())
 			}
 		}
 		for _, e := range entries {
 			if len(e.Paths) == 0 {
-				fmt.Fprintf(&b, "\thandle {\n\t\treverse_proxy localhost:%d {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", e.Port)
+				fmt.Fprintf(&b, "\thandle {\n\t\treverse_proxy %s {\n\t\t\tflush_interval -1\n\t\t}\n\t}\n", e.upstream())
 				break
 			}
 		}
